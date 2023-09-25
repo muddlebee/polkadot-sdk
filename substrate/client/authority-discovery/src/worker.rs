@@ -551,13 +551,15 @@ where
 				// properly signed by the owner of the PeerId
 
 				if let Some(peer_signature) = peer_signature {
-					let public_key = PublicKey::try_decode_protobuf(&peer_signature.public_key)
-						.map_err(Error::ParsingLibp2pIdentity)?;
-					let signature = Signature { public_key, bytes: peer_signature.signature };
-
-					// TODO: fix
-					if !signature.verify(record, &remote_peer_id.into()) {
-						return Err(Error::VerifyingDhtPayload)
+					match self.network.verify(
+						remote_peer_id.into(),
+						&peer_signature.public_key,
+						&peer_signature.signature,
+						&record,
+					) {
+						Ok(true) => {},
+						Ok(false) => return Err(Error::VerifyingDhtPayload),
+						Err(error) => return Err(Error::ParsingLibp2pIdentity(error)),
 					}
 				} else if self.strict_record_validation {
 					return Err(Error::MissingPeerIdSignature)

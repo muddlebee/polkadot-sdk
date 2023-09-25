@@ -57,12 +57,13 @@ use tokio::time::{Interval, MissedTickBehavior};
 use sc_client_api::{BlockBackend, HeaderBackend, ProofProvider};
 use sc_consensus::{import_queue::ImportQueueService, IncomingBlock};
 use sc_network::{
-	config::{
-		FullNetworkConfiguration, NonReservedPeerMode, NotificationHandshake, ProtocolId, SetConfig,
-	},
-	peer_store::{PeerStoreHandle, PeerStoreProvider},
+	config::{FullNetworkConfiguration, NotificationHandshake, ProtocolId, SetConfig},
+	peer_store::PeerStoreProvider,
 	request_responses::{IfDisconnected, RequestFailure},
-	service::traits::{Direction, NotificationConfig, NotificationEvent, ValidationResult},
+	service::{
+		metrics::Metrics as NetworkMetrics,
+		traits::{Direction, NotificationConfig, NotificationEvent, ValidationResult},
+	},
 	types::ProtocolName,
 	utils::LruHashSet,
 	NetworkBackend, NotificationService, ReputationChange,
@@ -320,7 +321,7 @@ pub struct SyncingEngine<B: BlockT, Client> {
 	syncing_started: Option<Instant>,
 
 	/// Handle to `PeerStore`.
-	peer_store_handle: PeerStoreHandle,
+	peer_store_handle: Arc<dyn PeerStoreProvider>,
 
 	/// Instant when the last notification was sent or received.
 	last_notification_io: Instant,
@@ -356,6 +357,7 @@ where
 		roles: Roles,
 		client: Arc<Client>,
 		metrics_registry: Option<&Registry>,
+		network_metrics: Option<NetworkMetrics>,
 		net_config: &FullNetworkConfiguration<B, <B as BlockT>::Hash, N>,
 		protocol_id: ProtocolId,
 		fork_id: &Option<String>,
@@ -366,7 +368,7 @@ where
 		block_downloader: Arc<dyn BlockDownloader<B>>,
 		state_request_protocol_name: ProtocolName,
 		warp_sync_protocol_name: Option<ProtocolName>,
-		peer_store_handle: PeerStoreHandle,
+		peer_store_handle: Arc<dyn PeerStoreProvider>,
 	) -> Result<(Self, SyncingService<B>, N::NotificationProtocolConfig), ClientError>
 	where
 		N: NetworkBackend<B, <B as BlockT>::Hash>,
@@ -457,6 +459,8 @@ where
 					.ok()
 					.flatten()
 					.expect("Genesis block exists; qed"),
+				&net_config.network_config.default_peers_set,
+				network_metrics,
 			);
 
 		let chain_sync = ChainSync::new(
@@ -1141,6 +1145,8 @@ where
 	) -> Result<(), ()> {
 		log::trace!(target: LOG_TARGET, "New peer {peer_id} {status:?}");
 
+		debug_assert!(!self.peers.contains_key(&peer_id));
+
 		let peer = Peer {
 			info: ExtendedPeerInfo {
 				roles: status.roles,
@@ -1386,6 +1392,8 @@ where
 		best_number: NumberFor<B>,
 		best_hash: B::Hash,
 		genesis_hash: B::Hash,
+		set_config: &SetConfig,
+		metrics: Option<NetworkMetrics>,
 	) -> (N::NotificationProtocolConfig, Box<dyn NotificationService>) {
 		let block_announces_protocol = {
 			let genesis_hash = genesis_hash.as_ref();
@@ -1410,14 +1418,8 @@ where
 				best_hash,
 				genesis_hash,
 			))),
-			// NOTE: `set_config` will be ignored by `protocol.rs` as the block announcement
-			// protocol is still hardcoded into the peerset.
-			SetConfig {
-				in_peers: 0,
-				out_peers: 0,
-				reserved_nodes: Vec::new(),
-				non_reserved_mode: NonReservedPeerMode::Deny,
-			},
+			set_config.clone(),
+			metrics,
 		)
 	}
 

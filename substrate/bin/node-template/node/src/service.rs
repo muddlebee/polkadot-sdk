@@ -188,7 +188,7 @@ pub fn new_full<
 				transaction_pool: Some(OffchainTransactionPoolFactory::new(
 					transaction_pool.clone(),
 				)),
-				network_provider: Arc::new(network.clone()), // TODO(aaro): remove if possible
+				network_provider: network.clone(),
 				enable_http_requests: true,
 				custom_extensions: |_| vec![],
 			})

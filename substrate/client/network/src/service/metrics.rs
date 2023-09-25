@@ -16,6 +16,9 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// TODO(aaro): fix
+#![allow(missing_docs)]
+
 use crate::transport::BandwidthSinks;
 use prometheus_endpoint::{
 	self as prometheus, Counter, CounterVec, Gauge, GaugeVec, HistogramOpts, MetricSource, Opts,
@@ -38,6 +41,11 @@ pub fn register(registry: &Registry, sources: MetricSources) -> Result<Metrics, 
 	Metrics::register(registry)
 }
 
+// TODO(aaro): zzz
+pub fn register_without_sources(registry: Option<&Registry>) -> Option<Metrics> {
+	Metrics::register(registry?).ok()
+}
+
 /// Predefined metric sources that are fed directly into prometheus.
 pub struct MetricSources {
 	pub bandwidth: Arc<BandwidthSinks>,
@@ -45,6 +53,7 @@ pub struct MetricSources {
 }
 
 /// Dedicated metrics.
+#[derive(Clone)]
 pub struct Metrics {
 	// This list is ordered alphabetically
 	pub connections_closed_total: CounterVec<U64>,

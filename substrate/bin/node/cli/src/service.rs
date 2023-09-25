@@ -383,6 +383,7 @@ pub fn new_full_base<N: NetworkBackend<Block, <Block as BlockT>::Hash>>(
 			(rpc_builder, import_setup, rpc_setup, mut telemetry, statement_store, mixnet_api_backend),
 	} = new_partial(&config, mixnet_config.as_ref())?;
 
+	let metrics = N::register_metrics(config.prometheus_config.as_ref().map(|cfg| &cfg.registry));
 	let shared_voter_state = rpc_setup;
 	let auth_disc_publish_non_global_ips = config.network.allow_non_globals_in_dht;
 	let mut net_config =
@@ -391,21 +392,25 @@ pub fn new_full_base<N: NetworkBackend<Block, <Block as BlockT>::Hash>>(
 
 	let grandpa_protocol_name = grandpa::protocol_standard_name(&genesis_hash, &config.chain_spec);
 	let (grandpa_protocol_config, grandpa_notification_service) =
-		grandpa::grandpa_peers_set_config::<_, N>(grandpa_protocol_name.clone());
+		grandpa::grandpa_peers_set_config::<_, N>(grandpa_protocol_name.clone(), metrics.clone());
 	net_config.add_notification_protocol(grandpa_protocol_config);
 
 	let (statement_handler_proto, statement_config) =
 		sc_network_statement::StatementHandlerPrototype::new::<_, _, N>(
-			genesis_hash
+			genesis_hash,
 			config.chain_spec.fork_id(),
+			metrics.clone(),
 		);
 	net_config.add_notification_protocol(statement_config);
 
 	let mixnet_protocol_name =
 		sc_mixnet::protocol_name(genesis_hash.as_ref(), config.chain_spec.fork_id());
 	let mixnet_notification_service = mixnet_config.as_ref().map(|mixnet_config| {
-		let (config, notification_service) =
-			sc_mixnet::peers_set_config(mixnet_protocol_name.clone(), mixnet_config);
+		let (config, notification_service) = sc_mixnet::peers_set_config::<_, N>(
+			mixnet_protocol_name.clone(),
+			mixnet_config,
+			metrics.clone(),
+		);
 		net_config.add_notification_protocol(config);
 		notification_service
 	});
@@ -427,6 +432,7 @@ pub fn new_full_base<N: NetworkBackend<Block, <Block as BlockT>::Hash>>(
 			block_announce_validator_builder: None,
 			warp_sync_params: Some(WarpSyncParams::WithProvider(warp_sync)),
 			block_relay: None,
+			metrics,
 		})?;
 
 	if let Some(mixnet_config) = mixnet_config {
@@ -959,7 +965,12 @@ mod tests {
 			crate::chain_spec::tests::integration_test_config_with_two_authorities(),
 			|config| {
 				let NewFullBase { task_manager, client, network, sync, transaction_pool, .. } =
-					new_full_base::<sc_network::NetworkWorker<_, _>>(config, None, false, |_, _| ())?;
+					new_full_base::<sc_network::NetworkWorker<_, _>>(
+						config,
+						None,
+						false,
+						|_, _| (),
+					)?;
 				Ok(sc_service_test::TestNetComponents::new(
 					task_manager,
 					client,

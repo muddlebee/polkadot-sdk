@@ -20,12 +20,41 @@
 
 //! Signature-related code
 
-use libp2p::{
-	identity::{Keypair, PublicKey},
-	PeerId,
-};
+// TODO(aaro): remove
+#![allow(unused)]
+#![allow(missing_docs)]
+
+use sc_network_types::PeerId;
 
 pub use libp2p::identity::SigningError;
+
+pub enum PublicKey {
+	Libp2p(libp2p::identity::PublicKey),
+	Litep2p(litep2p::crypto::PublicKey),
+}
+
+impl PublicKey {
+	pub fn encode_protobuf(&self) -> Vec<u8> {
+		match self {
+			Self::Libp2p(public) => public.encode_protobuf(),
+			Self::Litep2p(public) => public.to_protobuf_encoding(),
+		}
+	}
+
+	// pub fn to_peer_id(&self) -> PeerId {
+	// 	match self {
+	// 		Self::Libp2p(public) => public.to_peer_id().into(),
+	// 		Self::Litep2p(public) => public.to_peer_id().into(),
+	// 	}
+	// }
+
+	// pub fn verify(&self, message: &[u8], signature: &[u8]) -> bool {
+	// 	match self {
+	// 		Self::Libp2p(public) => public.verify(message, signature),
+	// 		Self::Litep2p(public) => public.verify(message, signature),
+	// 	}
+	// }
+}
 
 /// A result of signing a message with a network identity. Since `PeerId` is potentially a hash of a
 /// `PublicKey`, you need to reveal the `PublicKey` next to the signature, so the verifier can check
@@ -33,25 +62,31 @@ pub use libp2p::identity::SigningError;
 pub struct Signature {
 	/// The public key derived from the network identity that signed the message.
 	pub public_key: PublicKey,
+
 	/// The actual signature made for the message signed.
 	pub bytes: Vec<u8>,
 }
 
 impl Signature {
+	pub fn new(public_key: PublicKey, bytes: Vec<u8>) -> Self {
+		Self { public_key, bytes }
+	}
+
 	/// Create a signature for a message with a given network identity.
-	pub fn sign_message(
+	pub(crate) fn sign_message(
 		message: impl AsRef<[u8]>,
-		keypair: &Keypair,
+		keypair: &libp2p::identity::Keypair,
 	) -> Result<Self, SigningError> {
 		let public_key = keypair.public();
 		let bytes = keypair.sign(message.as_ref())?;
-		Ok(Self { public_key, bytes })
+		todo!();
+		// Ok(Self { public_key, bytes })
 	}
 
-	/// Verify whether the signature was made for the given message by the entity that controls the
-	/// given `PeerId`.
-	pub fn verify(&self, message: impl AsRef<[u8]>, peer_id: &PeerId) -> bool {
-		*peer_id == self.public_key.to_peer_id() &&
-			self.public_key.verify(message.as_ref(), &self.bytes)
-	}
+	// /// Verify whether the signature was made for the given message by the entity that controls
+	// the /// given `PeerId`.
+	// pub fn verify(&self, message: impl AsRef<[u8]>, peer_id: &PeerId) -> bool {
+	// 	*peer_id == self.public_key.to_peer_id() &&
+	// 		self.public_key.verify(message.as_ref(), &self.bytes)
+	// }
 }

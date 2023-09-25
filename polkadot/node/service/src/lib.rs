@@ -803,6 +803,8 @@ pub fn new_full<
 		other: (rpc_extensions_builder, import_setup, rpc_setup, slot_duration, mut telemetry),
 	} = new_partial::<SelectRelayChain<_>>(&mut config, basics, select_chain)?;
 
+	let metrics =
+		Network::register_metrics(config.prometheus_config.as_ref().map(|cfg| &cfg.registry));
 	let shared_voter_state = rpc_setup;
 	let auth_disc_publish_non_global_ips = config.network.allow_non_globals_in_dht;
 	let mut net_config =
@@ -815,7 +817,10 @@ pub fn new_full<
 	// Substrate nodes.
 	let grandpa_protocol_name = grandpa::protocol_standard_name(&genesis_hash, &config.chain_spec);
 	let (grandpa_protocol_config, grandpa_notification_service) =
-		grandpa::grandpa_peers_set_config::<_, Network>(grandpa_protocol_name.clone());
+		grandpa::grandpa_peers_set_config::<_, Network>(
+			grandpa_protocol_name.clone(),
+			metrics.clone(),
+		);
 	net_config.add_notification_protocol(grandpa_protocol_config);
 
 	let beefy_gossip_proto_name =
@@ -835,6 +840,7 @@ pub fn new_full<
 			let (beefy_notification_config, beefy_notification_service) =
 				beefy::communication::beefy_peers_set_config::<_, Network>(
 					beefy_gossip_proto_name.clone(),
+					metrics.clone(),
 				);
 
 			net_config.add_notification_protocol(beefy_notification_config);
@@ -857,7 +863,7 @@ pub fn new_full<
 			use polkadot_network_bridge::{peer_sets_info, IsAuthority};
 			let is_authority = if role.is_authority() { IsAuthority::Yes } else { IsAuthority::No };
 
-			peer_sets_info::<_, Network>(is_authority, &peerset_protocol_names)
+			peer_sets_info::<_, Network>(is_authority, &peerset_protocol_names, metrics.clone())
 				.into_iter()
 				.map(|(config, (peerset, service))| {
 					net_config.add_notification_protocol(config);
@@ -918,6 +924,7 @@ pub fn new_full<
 			block_announce_validator_builder: None,
 			warp_sync_params: Some(WarpSyncParams::WithProvider(warp_sync)),
 			block_relay: None,
+			metrics,
 		})?;
 
 	if config.offchain_worker.enabled {

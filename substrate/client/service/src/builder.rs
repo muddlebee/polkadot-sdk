@@ -43,8 +43,10 @@ use sc_executor::{
 use sc_keystore::LocalKeystore;
 use sc_network::{
 	config::{FullNetworkConfiguration, SyncMode},
-	peer_store::PeerStore,
-	service::traits::RequestResponseConfig,
+	service::{
+		metrics::Metrics as NetworkMetrics,
+		traits::{PeerStore, RequestResponseConfig},
+	},
 	NetworkBackend, NetworkStateInfo, NetworkStatusProvider,
 };
 use sc_network_bitswap::BitswapRequestHandler;
@@ -706,6 +708,8 @@ pub struct BuildNetworkParams<
 	/// User specified block relay params. If not specified, the default
 	/// block request handler will be used.
 	pub block_relay: Option<BlockRelayParams<TBl, TNet>>,
+	/// Metrics.
+	pub metrics: Option<NetworkMetrics>,
 }
 
 /// Build the network service, the network status sinks and an RPC sender.
@@ -746,6 +750,7 @@ where
 		block_announce_validator_builder,
 		warp_sync_params,
 		block_relay,
+		metrics,
 	} = params;
 
 	if warp_sync_params.is_none() && config.network.sync_mode.is_warp() {
@@ -848,12 +853,14 @@ where
 		net_config.add_request_response_protocol(config);
 	}
 
-	if config.network.ipfs_server {
-		// TODO: better abstraction for the bitswap server
-		// let (handler, protocol_config) = BitswapRequestHandler::new(client.clone());
-		// spawn_handle.spawn("bitswap-request-handler", Some("networking"), handler.run());
-		// net_config.add_request_response_protocol(protocol_config);
-	}
+	let bitswap_config = if config.network.ipfs_server {
+		let (handler, config) = TNet::bitswap_server(client.clone());
+		spawn_handle.spawn("bitswap-request-handler", Some("networking"), handler);
+
+		Some(config)
+	} else {
+		None
+	};
 
 	// create transactions protocol and add it to the list of supported protocols of
 	let (transactions_handler_proto, transactions_config) =
@@ -861,11 +868,12 @@ where
 			protocol_id.clone(),
 			genesis_hash,
 			config.chain_spec.fork_id(),
+			metrics.clone(),
 		);
 	net_config.add_notification_protocol(transactions_config);
 
 	// Create `PeerStore` and initialize it with bootnode peer ids.
-	let peer_store = PeerStore::new(
+	let peer_store = TNet::peer_store(
 		net_config
 			.network_config
 			.boot_nodes
@@ -880,6 +888,7 @@ where
 		Roles::from(&config.role),
 		client.clone(),
 		config.prometheus_config.as_ref().map(|config| config.registry.clone()).as_ref(),
+		metrics.clone(),
 		&net_config,
 		protocol_id.clone(),
 		&config.chain_spec.fork_id().map(ToOwned::to_owned),
@@ -895,6 +904,33 @@ where
 	let sync_service_import_queue = sync_service.clone();
 	let sync_service = Arc::new(sync_service);
 
+	// TODO: move this to litep2p backend
+	struct TestExecutor {
+		spawn_handle: SpawnTaskHandle,
+	}
+
+	impl std::fmt::Debug for TestExecutor {
+		fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+			f.debug_struct("TestExecutor").finish()
+		}
+	}
+
+	impl litep2p::executor::Executor for TestExecutor {
+		fn run(&self, future: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>) {
+			self.spawn_handle.spawn("libp2p-node", Some("networking"), future);
+		}
+
+		fn run_with_name(
+			&self,
+			name: &'static str,
+			future: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>,
+		) {
+			self.spawn_handle.spawn(name, Some("networking"), future);
+		}
+	}
+
+	let executor = Arc::new(TestExecutor { spawn_handle: spawn_handle.clone() });
+
 	let genesis_hash = client.hash(Zero::zero()).ok().flatten().expect("Genesis block exists; qed");
 	let network_params = sc_network::config::Params::<TBl, <TBl as BlockT>::Hash, TNet> {
 		role: config.role.clone(),
@@ -904,6 +940,7 @@ where
 				spawn_handle.spawn("libp2p-node", Some("networking"), fut);
 			})
 		},
+		spawn_handle: executor,
 		network_config: net_config,
 		peer_store: peer_store_handle,
 		genesis_hash,
@@ -911,6 +948,7 @@ where
 		fork_id: config.chain_spec.fork_id().map(ToOwned::to_owned),
 		metrics_registry: config.prometheus_config.as_ref().map(|config| config.registry.clone()),
 		block_announce_config,
+		bitswap_config,
 	};
 
 	let has_bootnodes = !network_params.network_config.network_config.boot_nodes.is_empty();
@@ -928,7 +966,7 @@ where
 	spawn_handle.spawn_blocking(
 		"chain-sync-network-service-provider",
 		Some("networking"),
-		chain_sync_network_provider.run(Arc::new(network.clone())),
+		chain_sync_network_provider.run(network.clone()),
 	);
 	spawn_handle.spawn("import-queue", None, import_queue.run(Box::new(sync_service_import_queue)));
 	spawn_handle.spawn_blocking("syncing", None, engine.run());
@@ -937,9 +975,9 @@ where
 	spawn_handle.spawn(
 		"system-rpc-handler",
 		Some("networking"),
-		build_system_rpc_future::<_, _, <TBl as BlockT>::Hash, _>(
+		build_system_rpc_future::<_, _, <TBl as BlockT>::Hash>(
 			config.role.clone(),
-			Arc::new(network_mut.network_service().clone()),
+			network_mut.network_service(),
 			sync_service.clone(),
 			client.clone(),
 			system_rpc_rx,
@@ -991,7 +1029,7 @@ where
 	});
 
 	Ok((
-		Arc::new(network),
+		network,
 		system_rpc_tx,
 		tx_handler_controller,
 		NetworkStarter(network_start_tx),

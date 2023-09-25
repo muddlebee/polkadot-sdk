@@ -21,17 +21,13 @@ use sc_network_types::PeerId;
 
 use sc_network::{
 	request_responses::{IfDisconnected, RequestFailure},
+	service::traits::NetworkService,
 	types::ProtocolName,
 	NetworkNotification, NetworkPeers, NetworkRequest, ReputationChange,
 };
 use sc_utils::mpsc::{tracing_unbounded, TracingUnboundedReceiver, TracingUnboundedSender};
 
 use std::sync::Arc;
-
-/// Network-related services required by `sc-network-sync`
-pub trait Network: NetworkPeers + NetworkRequest + NetworkNotification {}
-
-impl<T> Network for T where T: NetworkPeers + NetworkRequest + NetworkNotification {}
 
 /// Network service provider for `ChainSync`
 ///
@@ -126,7 +122,7 @@ impl NetworkServiceProvider {
 	}
 
 	/// Run the `NetworkServiceProvider`
-	pub async fn run(mut self, service: Arc<dyn Network + Send + Sync>) {
+	pub async fn run(mut self, service: Arc<dyn NetworkService>) {
 		while let Some(inner) = self.rx.next().await {
 			match inner {
 				ToServiceCommand::DisconnectPeer(peer, protocol_name) =>

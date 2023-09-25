@@ -85,7 +85,7 @@ pub(crate) fn build_collator_network<Network: NetworkBackend<Block, Hash>>(
 	};
 
 	let network_worker = Network::new(network_params)?;
-	let network_service = Arc::new(network_worker.network_service().clone()); // TODO(aaro): fix if possible
+	let network_service = network_worker.network_service();
 
 	let (network_start_tx, network_start_rx) = futures::channel::oneshot::channel();
 

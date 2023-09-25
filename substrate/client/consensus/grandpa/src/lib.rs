@@ -709,6 +709,7 @@ pub struct GrandpaParams<Block: BlockT, C, N, S, SC, VR> {
 /// For standard protocol name see [`crate::protocol_standard_name`].
 pub fn grandpa_peers_set_config<B: BlockT, N: NetworkBackend<B, <B as BlockT>::Hash>>(
 	protocol_name: ProtocolName,
+	metrics: Option<sc_network::service::metrics::Metrics>,
 ) -> (N::NotificationProtocolConfig, Box<dyn NotificationService>) {
 	use communication::grandpa_protocol_name;
 	N::notification_config(
@@ -723,6 +724,7 @@ pub fn grandpa_peers_set_config<B: BlockT, N: NetworkBackend<B, <B as BlockT>::H
 			reserved_nodes: Vec::new(),
 			non_reserved_mode: sc_network::config::NonReservedPeerMode::Deny,
 		},
+		metrics,
 	)
 }
 

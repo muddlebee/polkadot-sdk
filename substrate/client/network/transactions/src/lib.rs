@@ -36,7 +36,10 @@ use prometheus_endpoint::{register, Counter, PrometheusError, Registry, U64};
 use sc_network::{
 	config::{NonReservedPeerMode, ProtocolId, SetConfig},
 	error, multiaddr,
-	service::traits::{NotificationEvent, NotificationService, ValidationResult},
+	service::{
+		metrics::Metrics as NetworkMetrics,
+		traits::{NotificationEvent, NotificationService, ValidationResult},
+	},
 	types::ProtocolName,
 	utils::{interval, LruHashSet},
 	NetworkBackend, NetworkEventStream, NetworkNotification, NetworkPeers,
@@ -132,6 +135,7 @@ impl TransactionsHandlerPrototype {
 		protocol_id: ProtocolId,
 		genesis_hash: Hash,
 		fork_id: Option<&str>,
+		metrics: Option<NetworkMetrics>,
 	) -> (Self, Net::NotificationProtocolConfig) {
 		let genesis_hash = genesis_hash.as_ref();
 		let protocol_name: ProtocolName = if let Some(fork_id) = fork_id {
@@ -151,6 +155,7 @@ impl TransactionsHandlerPrototype {
 				reserved_nodes: Vec::new(),
 				non_reserved_mode: NonReservedPeerMode::Deny,
 			},
+			metrics,
 		);
 
 		(Self { protocol_name, notification_service }, config)
@@ -349,6 +354,9 @@ where
 			},
 			NotificationEvent::NotificationStreamClosed { peer } => {
 				let _peer = self.peers.remove(&peer);
+				if _peer.is_none() {
+					panic!("peer doesn't exist {peer:?}");
+				}
 				debug_assert!(_peer.is_some());
 			},
 			NotificationEvent::NotificationReceived { peer, notification } => {
@@ -373,7 +381,7 @@ where
 					iter::once(addr).collect(),
 				);
 				if let Err(err) = result {
-					log::error!(target: "sync", "Add reserved peer failed: {}", err);
+					log::error!(target: "transactions", "Add reserved peer failed: {}", err);
 				}
 			},
 			SyncEvent::PeerDisconnected(remote) => {
@@ -382,7 +390,7 @@ where
 					iter::once(remote).collect(),
 				);
 				if let Err(err) = result {
-					log::error!(target: "sync", "Remove reserved peer failed: {}", err);
+					log::error!(target: "transactions", "Remove reserved peer failed: {}", err);
 				}
 			},
 		}
@@ -392,16 +400,16 @@ where
 	fn on_transactions(&mut self, who: PeerId, transactions: Transactions<B::Extrinsic>) {
 		// Accept transactions only when node is not major syncing
 		if self.sync.is_major_syncing() {
-			trace!(target: "sync", "{} Ignoring transactions while major syncing", who);
+			trace!(target: "transactions", "{} Ignoring transactions while major syncing", who);
 			return
 		}
 
-		trace!(target: "sync", "Received {} transactions from {}", transactions.len(), who);
+		trace!(target: "transactions", "Received {} transactions from {}", transactions.len(), who);
 		if let Some(ref mut peer) = self.peers.get_mut(&who) {
 			for t in transactions {
 				if self.pending_transactions.len() > MAX_PENDING_TRANSACTIONS {
 					debug!(
-						target: "sync",
+						target: "transactions",
 						"Ignoring any further transactions that exceed `MAX_PENDING_TRANSACTIONS`({}) limit",
 						MAX_PENDING_TRANSACTIONS,
 					);
@@ -446,7 +454,7 @@ where
 			return
 		}
 
-		debug!(target: "sync", "Propagating transaction [{:?}]", hash);
+		debug!(target: "transactions", "Propagating transaction [{:?}]", hash);
 		if let Some(transaction) = self.transaction_pool.transaction(hash) {
 			let propagated_to = self.do_propagate_transactions(&[(hash.clone(), transaction)]);
 			self.transaction_pool.on_broadcasted(propagated_to);
@@ -478,7 +486,7 @@ where
 				for hash in hashes {
 					propagated_to.entry(hash).or_default().push(who.to_base58());
 				}
-				trace!(target: "sync", "Sending {} transactions to {}", to_send.len(), who);
+				trace!(target: "transactions", "Sending {} transactions to {}", to_send.len(), who);
 				let _ = self.notification_service.send_sync_notification(who, to_send.encode());
 			}
 		}
@@ -497,7 +505,7 @@ where
 			return
 		}
 
-		debug!(target: "sync", "Propagating transactions");
+		debug!(target: "transactions", "Propagating transactions");
 		let transactions = self.transaction_pool.transactions();
 		let propagated_to = self.do_propagate_transactions(&transactions);
 		self.transaction_pool.on_broadcasted(propagated_to);

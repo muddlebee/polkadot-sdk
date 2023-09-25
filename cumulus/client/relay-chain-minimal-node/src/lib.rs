@@ -73,7 +73,7 @@ fn build_authority_discovery_service<Block: BlockT>(
 			..Default::default()
 		},
 		client,
-		Arc::new(network.clone()), // TODO(aaro): fix if possible
+		network.clone(),
 		Box::pin(dht_event_stream),
 		authority_discovery_role,
 		prometheus_registry,

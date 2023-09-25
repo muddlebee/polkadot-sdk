@@ -221,10 +221,9 @@ pub async fn build_system_rpc_future<
 		+ Sync
 		+ 'static,
 	H: sc_network_common::ExHashT,
-	N: sc_network::service::traits::NetworkService,
 >(
 	role: Role,
-	network_service: Arc<N>,
+	network_service: Arc<dyn sc_network::service::traits::NetworkService>,
 	sync_service: Arc<SyncingService<B>>,
 	client: Arc<C>,
 	mut rpc_rx: TracingUnboundedReceiver<sc_rpc::system::Request<B>>,

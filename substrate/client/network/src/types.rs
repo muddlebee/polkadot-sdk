@@ -100,6 +100,15 @@ impl upgrade::ProtocolName for ProtocolName {
 	}
 }
 
+impl From<ProtocolName> for litep2p::ProtocolName {
+	fn from(value: ProtocolName) -> Self {
+		match value {
+			ProtocolName::Static(inner) => litep2p::ProtocolName::from(inner),
+			ProtocolName::OnHeap(inner) => litep2p::ProtocolName::from(inner),
+		}
+	}
+}
+
 #[cfg(test)]
 mod tests {
 	use super::ProtocolName;

@@ -211,7 +211,7 @@ async fn start_node_impl<N: NetworkBackend<Block, Hash>>(
 				transaction_pool: Some(OffchainTransactionPoolFactory::new(
 					transaction_pool.clone(),
 				)),
-				network_provider: Arc::new(network.clone()), // TODO(aaro): fix if possible
+				network_provider: network.clone(),
 				is_validator: parachain_config.role.is_authority(),
 				enable_http_requests: false,
 				custom_extensions: move |_| vec![],
@@ -244,7 +244,7 @@ async fn start_node_impl<N: NetworkBackend<Block, Hash>>(
 		config: parachain_config,
 		keystore: params.keystore_container.keystore(),
 		backend,
-		network: Arc::new(network.clone()), // TODO(aaro): fix if possible
+		network: network.clone(),
 		sync_service: sync_service.clone(),
 		system_rpc_tx,
 		tx_handler_controller,

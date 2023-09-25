@@ -248,6 +248,7 @@ impl<B: BlockT> Future for GossipEngine<B> {
 						},
 						// The network event stream closed. Do the same for [`GossipValidator`].
 						Poll::Ready(None) => {
+							log::error!(target: "gossip", "netwrk event stream returned none");
 							self.is_terminated = true;
 							return Poll::Ready(())
 						},
