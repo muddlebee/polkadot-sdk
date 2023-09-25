@@ -21,8 +21,8 @@
 
 use crate::futures_stream::FuturesStream;
 use futures::{stream::FusedStream, Future, FutureExt, Stream, StreamExt};
-use libp2p::PeerId;
 use log::{debug, error, trace, warn};
+use sc_network::PeerId;
 use sc_network_common::sync::message::BlockAnnounce;
 use sp_consensus::block_validation::Validation;
 use sp_runtime::traits::{Block as BlockT, Header, Zero};
@@ -312,7 +312,7 @@ impl<B: BlockT> FusedStream for BlockAnnounceValidator<B> {
 mod tests {
 	use super::*;
 	use crate::block_announce_validator::AllocateSlotForBlockAnnounceValidation;
-	use libp2p::PeerId;
+	use sc_network::PeerId;
 	use sp_consensus::block_validation::DefaultBlockAnnounceValidator;
 	use substrate_test_runtime_client::runtime::Block;
 

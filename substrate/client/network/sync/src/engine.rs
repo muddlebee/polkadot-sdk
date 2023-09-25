@@ -44,7 +44,7 @@ use futures::{
 	future::{BoxFuture, Fuse},
 	FutureExt, StreamExt,
 };
-use libp2p::{request_response::OutboundFailure, PeerId};
+use libp2p::request_response::OutboundFailure;
 use log::{debug, trace};
 use prometheus_endpoint::{
 	register, Counter, Gauge, GaugeVec, MetricSource, Opts, PrometheusError, Registry,
@@ -66,7 +66,7 @@ use sc_network::{
 	service::traits::{Direction, NotificationEvent, ValidationResult},
 	types::ProtocolName,
 	utils::LruHashSet,
-	NotificationService, ReputationChange,
+	NotificationService, PeerId, ReputationChange,
 };
 use sc_network_common::{
 	role::Roles,
