@@ -34,8 +34,9 @@ pub use crate::{
 pub use libp2p::{
 	build_multiaddr,
 	identity::{self, ed25519, Keypair},
-	multiaddr, Multiaddr, PeerId,
+	multiaddr, Multiaddr,
 };
+use sc_network_types::PeerId;
 
 use crate::peer_store::PeerStoreHandle;
 use codec::Encode;

@@ -330,9 +330,9 @@ mod tests {
 	use sc_block_builder::BlockBuilderBuilder;
 	use sc_client_api::Backend as _;
 	use sc_network::{
-		config::MultiaddrWithPeerId, types::ProtocolName, Multiaddr, ObservedRole, PeerId,
-		ReputationChange,
+		config::MultiaddrWithPeerId, types::ProtocolName, Multiaddr, ObservedRole, ReputationChange,
 	};
+	use sc_network_types::PeerId;
 	use sc_transaction_pool::BasicPool;
 	use sc_transaction_pool_api::{InPoolTransaction, TransactionPool};
 	use sp_consensus::BlockOrigin;

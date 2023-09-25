@@ -66,12 +66,13 @@ use sc_network::{
 	service::traits::{Direction, NotificationEvent, ValidationResult},
 	types::ProtocolName,
 	utils::LruHashSet,
-	NotificationService, PeerId, ReputationChange,
+	NotificationService, ReputationChange,
 };
 use sc_network_common::{
 	role::Roles,
 	sync::message::{BlockAnnounce, BlockAnnouncesHandshake, BlockRequest, BlockState},
 };
+use sc_network_types::PeerId;
 use sc_utils::mpsc::{tracing_unbounded, TracingUnboundedReceiver, TracingUnboundedSender};
 use sp_blockchain::{Error as ClientError, HeaderMetadata};
 use sp_consensus::{block_validation::BlockAnnounceValidator, BlockOrigin};

@@ -22,7 +22,7 @@ use crate::{
 };
 use fork_tree::ForkTree;
 use log::{debug, trace, warn};
-use sc_network::PeerId;
+use sc_network_types::PeerId;
 use sp_blockchain::Error as ClientError;
 use sp_runtime::traits::{Block as BlockT, NumberFor, Zero};
 use std::{

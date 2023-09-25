@@ -37,10 +37,11 @@ use sc_network::{
 	service::traits::{NotificationEvent, NotificationService, ValidationResult},
 	types::ProtocolName,
 	utils::{interval, LruHashSet},
-	NetworkEventStream, NetworkNotification, NetworkPeers, PeerId,
+	NetworkEventStream, NetworkNotification, NetworkPeers,
 };
 use sc_network_common::role::ObservedRole;
 use sc_network_sync::{SyncEvent, SyncEventStream};
+use sc_network_types::PeerId;
 use sp_statement_store::{
 	Hash, NetworkPriority, Statement, StatementSource, StatementStore, SubmitResult,
 };
