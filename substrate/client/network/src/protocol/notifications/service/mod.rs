@@ -244,7 +244,7 @@ impl NotificationService for NotificationHandle {
 
 	/// Send asynchronous `notification` to `peer`, allowing sender to exercise backpressure.
 	async fn send_async_notification(
-		&self,
+		&mut self,
 		peer: &sc_network_types::PeerId,
 		notification: Vec<u8>,
 	) -> Result<(), error::Error> {

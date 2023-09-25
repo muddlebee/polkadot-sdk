@@ -540,12 +540,12 @@ mod tests {
 			unimplemented!();
 		}
 
-		fn send_sync_notification(&self, _peer: &PeerId, _notification: Vec<u8>) {
+		fn send_sync_notification(&mut self, _peer: &PeerId, _notification: Vec<u8>) {
 			unimplemented!();
 		}
 
 		async fn send_async_notification(
-			&self,
+			&mut self,
 			_peer: &PeerId,
 			_notification: Vec<u8>,
 		) -> Result<(), sc_network::error::Error> {

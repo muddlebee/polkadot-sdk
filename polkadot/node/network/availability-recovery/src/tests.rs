@@ -39,7 +39,7 @@ use polkadot_node_subsystem_test_helpers::{
 };
 use polkadot_node_subsystem_util::TimeoutExt;
 use polkadot_primitives::{
-	AuthorityDiscoveryId, Hash, HeadData, IndexedVec, PersistedValidationData, ValidatorId,
+	AuthorityDiscoveryId, Block, Hash, HeadData, IndexedVec, PersistedValidationData, ValidatorId,
 };
 use polkadot_primitives_test_helpers::{dummy_candidate_receipt, dummy_hash};
 
@@ -60,8 +60,10 @@ fn test_harness_fast_path<T: Future<Output = (VirtualOverseer, RequestResponseCo
 
 	let (context, virtual_overseer) = make_subsystem_context(pool.clone());
 
-	let (collation_req_receiver, req_cfg) =
-		IncomingRequest::get_config_receiver(&ReqProtocolNames::new(&GENESIS_HASH, None));
+	let (collation_req_receiver, req_cfg) = IncomingRequest::get_config_receiver::<
+		Block,
+		sc_network::NetworkWorker<Block, Hash>,
+	>(&ReqProtocolNames::new(&GENESIS_HASH, None));
 	let subsystem =
 		AvailabilityRecoverySubsystem::with_fast_path(collation_req_receiver, Metrics::new_dummy());
 	let subsystem = async {
@@ -95,8 +97,10 @@ fn test_harness_chunks_only<T: Future<Output = (VirtualOverseer, RequestResponse
 
 	let (context, virtual_overseer) = make_subsystem_context(pool.clone());
 
-	let (collation_req_receiver, req_cfg) =
-		IncomingRequest::get_config_receiver(&ReqProtocolNames::new(&GENESIS_HASH, None));
+	let (collation_req_receiver, req_cfg) = IncomingRequest::get_config_receiver::<
+		Block,
+		sc_network::NetworkWorker<Block, Hash>,
+	>(&ReqProtocolNames::new(&GENESIS_HASH, None));
 	let subsystem = AvailabilityRecoverySubsystem::with_chunks_only(
 		collation_req_receiver,
 		Metrics::new_dummy(),
@@ -133,8 +137,10 @@ fn test_harness_chunks_if_pov_large<
 
 	let (context, virtual_overseer) = make_subsystem_context(pool.clone());
 
-	let (collation_req_receiver, req_cfg) =
-		IncomingRequest::get_config_receiver(&ReqProtocolNames::new(&GENESIS_HASH, None));
+	let (collation_req_receiver, req_cfg) = IncomingRequest::get_config_receiver::<
+		Block,
+		sc_network::NetworkWorker<Block, Hash>,
+	>(&ReqProtocolNames::new(&GENESIS_HASH, None));
 	let subsystem = AvailabilityRecoverySubsystem::with_chunks_if_pov_large(
 		collation_req_receiver,
 		Metrics::new_dummy(),

@@ -129,17 +129,42 @@ fn main() -> Result<(), sc_cli::Error> {
 				.unwrap_or(cumulus_test_service::Consensus::RelayChain);
 
 			let (mut task_manager, _, _, _, _) = tokio_runtime
-				.block_on(cumulus_test_service::start_node_impl(
-					config,
-					collator_key,
-					polkadot_config,
-					parachain_id,
-					cli.disable_block_announcements.then(wrap_announce_block),
-					cli.fail_pov_recovery,
-					|_| Ok(jsonrpsee::RpcModule::new(())),
-					consensus,
-					collator_options,
-				))
+				.block_on(async move {
+					match polkadot_config.network.network_backend {
+						sc_network::config::NetworkBackendType::Libp2p =>
+							cumulus_test_service::start_node_impl::<
+								_,
+								sc_network::NetworkWorker<_, _>,
+							>(
+								config,
+								collator_key,
+								polkadot_config,
+								parachain_id,
+								cli.disable_block_announcements.then(wrap_announce_block),
+								cli.fail_pov_recovery,
+								|_| Ok(jsonrpsee::RpcModule::new(())),
+								consensus,
+								collator_options,
+							)
+							.await,
+						sc_network::config::NetworkBackendType::Litep2p =>
+							cumulus_test_service::start_node_impl::<
+								_,
+								sc_network::Litep2pNetworkBackend,
+							>(
+								config,
+								collator_key,
+								polkadot_config,
+								parachain_id,
+								cli.disable_block_announcements.then(wrap_announce_block),
+								cli.fail_pov_recovery,
+								|_| Ok(jsonrpsee::RpcModule::new(())),
+								consensus,
+								collator_options,
+							)
+							.await,
+					}
+				})
 				.expect("could not create Cumulus test service");
 
 			tokio_runtime

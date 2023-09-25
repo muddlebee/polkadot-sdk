@@ -158,27 +158,35 @@ impl TestNetworkBuilder {
 
 		let (chain_sync_network_provider, chain_sync_network_handle) =
 			self.chain_sync_network.unwrap_or(NetworkServiceProvider::new());
-		let mut block_relay_params = BlockRequestHandler::new(
-			chain_sync_network_handle.clone(),
-			&protocol_id,
-			None,
-			client.clone(),
-			50,
-		);
+		let mut block_relay_params =
+			BlockRequestHandler::new::<
+				NetworkWorker<
+					substrate_test_runtime_client::runtime::Block,
+					substrate_test_runtime_client::runtime::Hash,
+				>,
+			>(chain_sync_network_handle.clone(), &protocol_id, None, client.clone(), 50);
 		tokio::spawn(Box::pin(async move {
 			block_relay_params.server.run().await;
 		}));
 
 		let state_request_protocol_config = {
-			let (handler, protocol_config) =
-				StateRequestHandler::new(&protocol_id, None, client.clone(), 50);
+			let (handler, protocol_config) = StateRequestHandler::new::<
+				NetworkWorker<
+					substrate_test_runtime_client::runtime::Block,
+					substrate_test_runtime_client::runtime::Hash,
+				>,
+			>(&protocol_id, None, client.clone(), 50);
 			tokio::spawn(handler.run().boxed());
 			protocol_config
 		};
 
 		let light_client_request_protocol_config = {
-			let (handler, protocol_config) =
-				LightClientRequestHandler::new(&protocol_id, None, client.clone());
+			let (handler, protocol_config) = LightClientRequestHandler::new::<
+				NetworkWorker<
+					substrate_test_runtime_client::runtime::Block,
+					substrate_test_runtime_client::runtime::Hash,
+				>,
+			>(&protocol_id, None, client.clone());
 			tokio::spawn(handler.run().boxed());
 			protocol_config
 		};
@@ -242,7 +250,11 @@ impl TestNetworkBuilder {
 		let worker = NetworkWorker::<
 			substrate_test_runtime_client::runtime::Block,
 			substrate_test_runtime_client::runtime::Hash,
-		>::new(config::Params::<substrate_test_runtime_client::runtime::Block> {
+		>::new(config::Params::<
+			substrate_test_runtime_client::runtime::Block,
+			substrate_test_runtime_client::runtime::Hash,
+			NetworkWorker<_, _>,
+		> {
 			block_announce_config,
 			role: config::Role::Full,
 			executor: Box::new(|f| {

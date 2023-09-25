@@ -50,7 +50,7 @@ use sc_consensus::{
 	BlockImportParams, ImportQueue,
 };
 use sc_executor::{HeapAllocStrategy, WasmExecutor, DEFAULT_HEAP_ALLOC_STRATEGY};
-use sc_network::{config::FullNetworkConfiguration, NetworkBlock};
+use sc_network::{config::FullNetworkConfiguration, NetworkBackend, NetworkBlock};
 use sc_network_sync::SyncingService;
 use sc_service::{Configuration, PartialComponents, TFullBackend, TFullClient, TaskManager};
 use sc_telemetry::{Telemetry, TelemetryHandle, TelemetryWorker, TelemetryWorkerHandle};
@@ -278,7 +278,7 @@ where
 /// This is the actual implementation that is abstract over the executor and the runtime api for
 /// shell nodes.
 #[sc_tracing::logging::prefix_logs_with("Parachain")]
-async fn start_shell_node_impl<RuntimeApi, RB, BIQ, SC>(
+async fn start_shell_node_impl<RuntimeApi, RB, BIQ, SC, Net>(
 	parachain_config: Configuration,
 	polkadot_config: Configuration,
 	collator_options: CollatorOptions,
@@ -323,6 +323,7 @@ where
 		OverseerHandle,
 		Arc<dyn Fn(Hash, Option<Vec<u8>>) + Send + Sync>,
 	) -> Result<(), sc_service::Error>,
+	Net: NetworkBackend<Block, Hash>,
 {
 	let parachain_config = prepare_node_config(parachain_config);
 
@@ -349,7 +350,7 @@ where
 	let prometheus_registry = parachain_config.prometheus_registry().cloned();
 	let transaction_pool = params.transaction_pool.clone();
 	let import_queue_service = params.import_queue.service();
-	let net_config = FullNetworkConfiguration::new(&parachain_config.network);
+	let net_config = FullNetworkConfiguration::<Block, Hash, Net>::new(&parachain_config.network);
 
 	let (network, system_rpc_tx, tx_handler_controller, start_network, sync_service) =
 		build_network(BuildNetworkParams {
@@ -376,7 +377,7 @@ where
 		config: parachain_config,
 		keystore: params.keystore_container.keystore(),
 		backend: backend.clone(),
-		network: network.clone(),
+		network: Arc::new(network.clone()), // TODO(aaro): fix if possible
 		sync_service: sync_service.clone(),
 		system_rpc_tx,
 		tx_handler_controller,
@@ -455,7 +456,7 @@ where
 ///
 /// This is the actual implementation that is abstract over the executor and the runtime api.
 #[sc_tracing::logging::prefix_logs_with("Parachain")]
-async fn start_node_impl<RuntimeApi, RB, BIQ, SC>(
+async fn start_node_impl<RuntimeApi, RB, BIQ, SC, Net>(
 	parachain_config: Configuration,
 	polkadot_config: Configuration,
 	collator_options: CollatorOptions,
@@ -502,6 +503,7 @@ where
 		Arc<dyn Fn(Hash, Option<Vec<u8>>) + Send + Sync>,
 		Arc<ParachainBackend>,
 	) -> Result<(), sc_service::Error>,
+	Net: NetworkBackend<Block, Hash>,
 {
 	let parachain_config = prepare_node_config(parachain_config);
 
@@ -527,7 +529,7 @@ where
 	let prometheus_registry = parachain_config.prometheus_registry().cloned();
 	let transaction_pool = params.transaction_pool.clone();
 	let import_queue_service = params.import_queue.service();
-	let net_config = FullNetworkConfiguration::new(&parachain_config.network);
+	let net_config = FullNetworkConfiguration::<Block, Hash, Net>::new(&parachain_config.network);
 
 	let (network, system_rpc_tx, tx_handler_controller, start_network, sync_service) =
 		build_network(BuildNetworkParams {
@@ -567,7 +569,7 @@ where
 		config: parachain_config,
 		keystore: params.keystore_container.keystore(),
 		backend: backend.clone(),
-		network: network.clone(),
+		network: Arc::new(network.clone()), // TODO(aaro): fix if possible
 		sync_service: sync_service.clone(),
 		system_rpc_tx,
 		tx_handler_controller,
@@ -864,14 +866,14 @@ pub fn rococo_parachain_build_import_queue(
 }
 
 /// Start a rococo parachain node.
-pub async fn start_rococo_parachain_node(
+pub async fn start_rococo_parachain_node<Net: NetworkBackend<Block, Hash>>(
 	parachain_config: Configuration,
 	polkadot_config: Configuration,
 	collator_options: CollatorOptions,
 	para_id: ParaId,
 	hwbench: Option<sc_sysinfo::HwBench>,
 ) -> sc_service::error::Result<(TaskManager, Arc<ParachainClient<RuntimeApi>>)> {
-	start_node_impl::<RuntimeApi, _, _, _>(
+	start_node_impl::<RuntimeApi, _, _, _, Net>(
 		parachain_config,
 		polkadot_config,
 		collator_options,
@@ -983,7 +985,7 @@ where
 }
 
 /// Start a polkadot-shell parachain node.
-pub async fn start_shell_node<RuntimeApi>(
+pub async fn start_shell_node<RuntimeApi, Net>(
 	parachain_config: Configuration,
 	polkadot_config: Configuration,
 	collator_options: CollatorOptions,
@@ -999,8 +1001,9 @@ where
 		+ sp_offchain::OffchainWorkerApi<Block>
 		+ sp_block_builder::BlockBuilder<Block>
 		+ cumulus_primitives_core::CollectCollationInfo<Block>,
+	Net: NetworkBackend<Block, Hash>,
 {
-	start_shell_node_impl::<RuntimeApi, _, _, _>(
+	start_shell_node_impl::<RuntimeApi, _, _, _, Net>(
 		parachain_config,
 		polkadot_config,
 		collator_options,
@@ -1247,7 +1250,7 @@ where
 }
 
 /// Start an aura powered parachain node. Asset Hub and Collectives use this.
-pub async fn start_generic_aura_node<RuntimeApi, AuraId: AppCrypto>(
+pub async fn start_generic_aura_node<RuntimeApi, AuraId: AppCrypto, Net>(
 	parachain_config: Configuration,
 	polkadot_config: Configuration,
 	collator_options: CollatorOptions,
@@ -1268,8 +1271,9 @@ where
 		+ frame_rpc_system::AccountNonceApi<Block, AccountId, Nonce>,
 	<<AuraId as AppCrypto>::Pair as Pair>::Signature:
 		TryFrom<Vec<u8>> + std::hash::Hash + sp_runtime::traits::Member + Codec,
+	Net: NetworkBackend<Block, Hash>,
 {
-	start_node_impl::<RuntimeApi, _, _, _>(
+	start_node_impl::<RuntimeApi, _, _, _, Net>(
 		parachain_config,
 		polkadot_config,
 		collator_options,
@@ -1584,7 +1588,7 @@ where
 }
 
 #[sc_tracing::logging::prefix_logs_with("Parachain")]
-async fn start_contracts_rococo_node_impl<RuntimeApi, RB, BIQ, SC>(
+async fn start_contracts_rococo_node_impl<RuntimeApi, RB, BIQ, SC, Net>(
 	parachain_config: Configuration,
 	polkadot_config: Configuration,
 	collator_options: CollatorOptions,
@@ -1631,6 +1635,7 @@ where
 		Arc<dyn Fn(Hash, Option<Vec<u8>>) + Send + Sync>,
 		Arc<ParachainBackend>,
 	) -> Result<(), sc_service::Error>,
+	Net: NetworkBackend<Block, Hash>,
 {
 	let parachain_config = prepare_node_config(parachain_config);
 
@@ -1656,7 +1661,7 @@ where
 	let prometheus_registry = parachain_config.prometheus_registry().cloned();
 	let transaction_pool = params.transaction_pool.clone();
 	let import_queue_service = params.import_queue.service();
-	let net_config = FullNetworkConfiguration::new(&parachain_config.network);
+	let net_config = FullNetworkConfiguration::<Block, Hash, Net>::new(&parachain_config.network);
 
 	let (network, system_rpc_tx, tx_handler_controller, start_network, sync_service) =
 		build_network(BuildNetworkParams {
@@ -1695,7 +1700,7 @@ where
 		config: parachain_config,
 		keystore: params.keystore_container.keystore(),
 		backend: backend.clone(),
-		network: network.clone(),
+		network: Arc::new(network.clone()), // TODO(aaro): fix if possible
 		sync_service: sync_service.clone(),
 		system_rpc_tx,
 		tx_handler_controller,
@@ -1810,14 +1815,28 @@ pub fn contracts_rococo_build_import_queue(
 }
 
 /// Start a parachain node.
-pub async fn start_contracts_rococo_node(
+pub async fn start_contracts_rococo_node<Net: NetworkBackend<Block, Hash>>(
 	parachain_config: Configuration,
 	polkadot_config: Configuration,
 	collator_options: CollatorOptions,
 	para_id: ParaId,
 	hwbench: Option<sc_sysinfo::HwBench>,
+<<<<<<< HEAD
 ) -> sc_service::error::Result<(TaskManager, Arc<ParachainClient<RuntimeApi>>)> {
 	start_contracts_rococo_node_impl::<RuntimeApi, _, _, _>(
+||||||| parent of f680c51188 (Make Polkadot SDK generic over the networking implementation)
+) -> sc_service::error::Result<(
+	TaskManager,
+	Arc<ParachainClient<contracts_rococo_runtime::RuntimeApi>>,
+)> {
+	start_contracts_rococo_node_impl::<contracts_rococo_runtime::RuntimeApi, _, _, _>(
+=======
+) -> sc_service::error::Result<(
+	TaskManager,
+	Arc<ParachainClient<contracts_rococo_runtime::RuntimeApi>>,
+)> {
+	start_contracts_rococo_node_impl::<contracts_rococo_runtime::RuntimeApi, _, _, _, Net>(
+>>>>>>> f680c51188 (Make Polkadot SDK generic over the networking implementation)
 		parachain_config,
 		polkadot_config,
 		collator_options,

@@ -262,6 +262,7 @@ pub mod transport;
 pub mod types;
 pub mod utils;
 
+pub use crate::litep2p::Litep2pNetworkBackend;
 pub use event::{DhtEvent, Event};
 #[doc(inline)]
 pub use request_responses::{Config, IfDisconnected, RequestFailure};
@@ -272,10 +273,10 @@ pub use sc_network_common::{
 pub use service::{
 	signature::Signature,
 	traits::{
-		KademliaKey, MessageSink, NetworkBlock, NetworkDHTProvider, NetworkEventStream,
-		NetworkNotification, NetworkPeers, NetworkRequest, NetworkSigner, NetworkStateInfo,
-		NetworkStatus, NetworkStatusProvider, NetworkSyncForkRequest,
-		NotificationSender as NotificationSenderT, NotificationSenderError,
+		KademliaKey, MessageSink, NetworkBackend, NetworkBlock, NetworkDHTProvider,
+		NetworkEventStream, NetworkNotification, NetworkPeers, NetworkRequest, NetworkSigner,
+		NetworkStateInfo, NetworkStatus, NetworkStatusProvider, NetworkSyncForkRequest,
+		NotificationConfig, NotificationSender as NotificationSenderT, NotificationSenderError,
 		NotificationSenderReady, NotificationService,
 	},
 	DecodingError, Keypair, NetworkService, NetworkWorker, NotificationSender, OutboundFailure,
