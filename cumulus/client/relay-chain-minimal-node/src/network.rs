@@ -54,10 +54,10 @@ pub(crate) fn build_collator_network<Network: NetworkBackend<Block, Hash>>(
 
 	// Since this node has no syncing, we do not want light-clients to connect to it.
 	// Here we set any potential light-client slots to 0.
-	adjust_network_config_light_in_peers(&mut full_network_config.network_config);
+	adjust_network_config_light_in_peers(&mut network_config.network_config);
 
 	let peer_store = PeerStore::new(
-		full_network_config
+		network_config
 			.network_config
 			.boot_nodes
 			.iter()
@@ -66,6 +66,34 @@ pub(crate) fn build_collator_network<Network: NetworkBackend<Block, Hash>>(
 	);
 	let peer_store_handle = peer_store.handle();
 	spawn_handle.spawn("peer-store", Some("networking"), peer_store.run());
+
+	// TODO: move this to litep2p backend
+	// TODO: remove from here
+	struct TestExecutor {
+		spawn_handle: SpawnTaskHandle,
+	}
+
+	impl std::fmt::Debug for TestExecutor {
+		fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+			f.debug_struct("TestExecutor").finish()
+		}
+	}
+
+	impl litep2p::executor::Executor for TestExecutor {
+		fn run(&self, future: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>) {
+			self.spawn_handle.spawn("libp2p-node", Some("networking"), future);
+		}
+
+		fn run_with_name(
+			&self,
+			name: &'static str,
+			future: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>,
+		) {
+			self.spawn_handle.spawn(name, Some("networking"), future);
+		}
+	}
+
+	let executor = Arc::new(TestExecutor { spawn_handle: spawn_handle.clone() });
 
 	let network_params = sc_network::config::Params::<Block, Hash, Network> {
 		role: config.role.clone(),
@@ -76,12 +104,14 @@ pub(crate) fn build_collator_network<Network: NetworkBackend<Block, Hash>>(
 			})
 		},
 		fork_id: None,
-		network_config: full_network_config,
-		peer_store: peer_store_handle,
+		network_config,
+		peer_store: Arc::new(peer_store_handle),
 		genesis_hash,
 		protocol_id,
 		metrics_registry: config.prometheus_config.as_ref().map(|config| config.registry.clone()),
 		block_announce_config,
+		bitswap_config: None,
+		spawn_handle: executor,
 	};
 
 	let network_worker = Network::new(network_params)?;
@@ -173,5 +203,6 @@ fn get_block_announce_proto_config<Network: NetworkBackend<Block, Hash>>(
 			reserved_nodes: Vec::new(),
 			non_reserved_mode: NonReservedPeerMode::Deny,
 		},
+		None, // TODO(aaro): pass metrics
 	)
 }

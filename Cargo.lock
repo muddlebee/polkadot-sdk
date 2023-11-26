@@ -3883,6 +3883,7 @@ dependencies = [
  "cumulus-relay-chain-interface",
  "cumulus-relay-chain-rpc-interface",
  "futures",
+ "litep2p",
  "parking_lot 0.12.1",
  "polkadot-availability-recovery",
  "polkadot-collator-protocol",

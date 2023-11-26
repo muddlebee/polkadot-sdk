@@ -359,15 +359,15 @@ pub async fn build_relay_chain_interface(
 			task_manager,
 			hwbench,
 		),
-		cumulus_client_cli::RelayChainMode::ExternalRpc(rpc_target_urls) => todo!(),
-		// build_minimal_relay_chain_node_with_rpc(
-		// 	relay_chain_config,
-		// 	task_manager,
-		// 	rpc_target_urls,
-		// )
-		// .await,
-		cumulus_client_cli::RelayChainMode::LightClient => todo!(),
-		// build_minimal_relay_chain_node_light_client(relay_chain_config, task_manager).await,
+		cumulus_client_cli::RelayChainMode::ExternalRpc(rpc_target_urls) =>
+			build_minimal_relay_chain_node_with_rpc(
+				relay_chain_config,
+				task_manager,
+				rpc_target_urls,
+			)
+			.await,
+		cumulus_client_cli::RelayChainMode::LightClient =>
+			build_minimal_relay_chain_node_light_client(relay_chain_config, task_manager).await,
 	}
 }
 
@@ -488,6 +488,7 @@ where
 		block_announce_validator_builder: Some(Box::new(move |_| block_announce_validator)),
 		warp_sync_params,
 		block_relay: None,
+		metrics: None, // TODO(aaro): enable metrics
 	})
 }
 

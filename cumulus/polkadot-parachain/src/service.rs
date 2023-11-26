@@ -652,7 +652,7 @@ where
 /// This node is basic in the sense that it doesn't support functionality like transaction
 /// payment. Intended to replace start_shell_node in use for glutton, shell, and seedling.
 #[sc_tracing::logging::prefix_logs_with("Parachain")]
-async fn start_basic_lookahead_node_impl<RuntimeApi, RB, BIQ, SC>(
+async fn start_basic_lookahead_node_impl<RuntimeApi, RB, BIQ, SC, Net>(
 	parachain_config: Configuration,
 	polkadot_config: Configuration,
 	collator_options: CollatorOptions,
@@ -699,6 +699,7 @@ where
 		Arc<dyn Fn(Hash, Option<Vec<u8>>) + Send + Sync>,
 		Arc<ParachainBackend>,
 	) -> Result<(), sc_service::Error>,
+	Net: sc_network::NetworkBackend<Block, <Block as BlockT>::Hash>,
 {
 	let parachain_config = prepare_node_config(parachain_config);
 
@@ -724,7 +725,7 @@ where
 	let prometheus_registry = parachain_config.prometheus_registry().cloned();
 	let transaction_pool = params.transaction_pool.clone();
 	let import_queue_service = params.import_queue.service();
-	let net_config = FullNetworkConfiguration::new(&parachain_config.network);
+	let net_config = FullNetworkConfiguration::<_, _, Net>::new(&parachain_config.network);
 
 	let (network, system_rpc_tx, tx_handler_controller, start_network, sync_service) =
 		build_network(BuildNetworkParams {
@@ -1347,7 +1348,7 @@ where
 /// Start a shell node which should later transition into an Aura powered parachain node. Asset Hub
 /// uses this because at genesis, Asset Hub was on the `shell` runtime which didn't have Aura and
 /// needs to sync and upgrade before it can run `AuraApi` functions.
-pub async fn start_asset_hub_node<RuntimeApi, AuraId: AppCrypto + Send + Codec + Sync>(
+pub async fn start_asset_hub_node<RuntimeApi, AuraId: AppCrypto + Send + Codec + Sync, Network>(
 	parachain_config: Configuration,
 	polkadot_config: Configuration,
 	collator_options: CollatorOptions,
@@ -1368,8 +1369,9 @@ where
 		+ frame_rpc_system::AccountNonceApi<Block, AccountId, Nonce>,
 	<<AuraId as AppCrypto>::Pair as Pair>::Signature:
 		TryFrom<Vec<u8>> + std::hash::Hash + sp_runtime::traits::Member + Codec,
+	Network: sc_network::NetworkBackend<Block, Hash>,
 {
-	start_node_impl::<RuntimeApi, _, _, _>(
+	start_node_impl::<RuntimeApi, _, _, _, Network>(
 		parachain_config,
 		polkadot_config,
 		collator_options,
@@ -1492,7 +1494,7 @@ where
 /// Start an aura powered parachain node which uses the lookahead collator to support async backing.
 /// This node is basic in the sense that its runtime api doesn't include common contents such as
 /// transaction payment. Used for aura glutton.
-pub async fn start_basic_lookahead_node<RuntimeApi, AuraId: AppCrypto>(
+pub async fn start_basic_lookahead_node<RuntimeApi, AuraId: AppCrypto, Network>(
 	parachain_config: Configuration,
 	polkadot_config: Configuration,
 	collator_options: CollatorOptions,
@@ -1513,8 +1515,9 @@ where
 		+ cumulus_primitives_aura::AuraUnincludedSegmentApi<Block>,
 	<<AuraId as AppCrypto>::Pair as Pair>::Signature:
 		TryFrom<Vec<u8>> + std::hash::Hash + sp_runtime::traits::Member + Codec,
+	Network: sc_network::NetworkBackend<Block, Hash>,
 {
-	start_basic_lookahead_node_impl::<RuntimeApi, _, _, _>(
+	start_basic_lookahead_node_impl::<RuntimeApi, _, _, _, Network>(
 		parachain_config,
 		polkadot_config,
 		collator_options,

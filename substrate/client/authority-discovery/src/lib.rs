@@ -40,7 +40,7 @@ use futures::{
 	Stream,
 };
 
-use sc_network::{event::DhtEvent, Multiaddr};
+use sc_network::{event::DhtEvent, service::traits::NetworkService, Multiaddr};
 use sc_network_types::PeerId;
 use sp_authority_discovery::AuthorityId;
 use sp_blockchain::HeaderBackend;
@@ -112,16 +112,15 @@ impl Default for WorkerConfig {
 /// Create a new authority discovery [`Worker`] and [`Service`].
 ///
 /// See the struct documentation of each for more details.
-pub fn new_worker_and_service<Client, Network, Block, DhtEventStream>(
+pub fn new_worker_and_service<Client, Block, DhtEventStream>(
 	client: Arc<Client>,
-	network: Arc<Network>,
+	network: Arc<dyn NetworkService>,
 	dht_event_rx: DhtEventStream,
 	role: Role,
 	prometheus_registry: Option<prometheus_endpoint::Registry>,
-) -> (Worker<Client, Network, Block, DhtEventStream>, Service)
+) -> (Worker<Client, Block, DhtEventStream>, Service)
 where
 	Block: BlockT + Unpin + 'static,
-	Network: NetworkProvider,
 	Client: AuthorityDiscovery<Block> + Send + Sync + 'static + HeaderBackend<Block>,
 	DhtEventStream: Stream<Item = DhtEvent> + Unpin,
 {
@@ -138,17 +137,16 @@ where
 /// Same as [`new_worker_and_service`] but with support for providing the `config`.
 ///
 /// When in doubt use [`new_worker_and_service`] as it will use the default configuration.
-pub fn new_worker_and_service_with_config<Client, Network, Block, DhtEventStream>(
+pub fn new_worker_and_service_with_config<Client, Block, DhtEventStream>(
 	config: WorkerConfig,
 	client: Arc<Client>,
-	network: Arc<Network>,
+	network: Arc<dyn NetworkService>,
 	dht_event_rx: DhtEventStream,
 	role: Role,
 	prometheus_registry: Option<prometheus_endpoint::Registry>,
-) -> (Worker<Client, Network, Block, DhtEventStream>, Service)
+) -> (Worker<Client, Block, DhtEventStream>, Service)
 where
 	Block: BlockT + Unpin + 'static,
-	Network: NetworkProvider,
 	Client: AuthorityDiscovery<Block> + 'static,
 	DhtEventStream: Stream<Item = DhtEvent> + Unpin,
 {

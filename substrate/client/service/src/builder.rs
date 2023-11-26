@@ -319,19 +319,6 @@ where
 	)
 }
 
-/// Shared network instance implementing a set of mandatory traits.
-pub trait SpawnTaskNetwork<Block: BlockT>:
-	NetworkStateInfo + NetworkStatusProvider + Send + Sync + 'static
-{
-}
-
-impl<T, Block> SpawnTaskNetwork<Block> for T
-where
-	Block: BlockT,
-	T: NetworkStateInfo + NetworkStatusProvider + Send + Sync + 'static,
-{
-}
-
 /// Parameters to pass into `build`.
 pub struct SpawnTasksParams<'a, TBl: BlockT, TCl, TExPool, TRpc, Backend> {
 	/// The service configuration.
@@ -350,7 +337,7 @@ pub struct SpawnTasksParams<'a, TBl: BlockT, TCl, TExPool, TRpc, Backend> {
 	pub rpc_builder:
 		Box<dyn Fn(DenyUnsafe, SubscriptionTaskExecutor) -> Result<RpcModule<TRpc>, Error>>,
 	/// A shared network instance.
-	pub network: Arc<dyn SpawnTaskNetwork<TBl>>,
+	pub network: Arc<dyn sc_network::service::traits::NetworkService>,
 	/// A Sender for RPC requests.
 	pub system_rpc_tx: TracingUnboundedSender<sc_rpc::system::Request<TBl>>,
 	/// Controller for transactions handlers
