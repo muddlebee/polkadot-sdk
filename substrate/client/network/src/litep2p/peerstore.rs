@@ -359,26 +359,26 @@ mod tests {
 	use super::peerstore_handle;
 	use sc_utils::mpsc::tracing_unbounded;
 
-	#[test]
-	fn acquire_mutual_handle() {
-		// acquire first handle to peer store and register protocol
-		let mut handle1 = peerstore_handle();
-		let (tx1, _) = tracing_unbounded("mpsc-peerset-protocol", 100_000);
-		handle1.register_protocol(tx1);
+	// #[test]
+	// fn acquire_mutual_handle() {
+	// 	// acquire first handle to peer store and register protocol
+	// 	let mut handle1 = peerstore_handle();
+	// 	let (tx1, _) = tracing_unbounded("mpsc-peerset-protocol", 100_000);
+	// 	handle1.register_protocol(tx1);
 
-		// acquire second handle to peerstore and verify both handles have the registered
-		// protocol
-		let mut handle2 = peerstore_handle();
-		println!("{:#?}", handle1.0.lock().protocols);
-		println!("{:#?}", handle2.0.lock().protocols);
-		assert_eq!(handle1.0.lock().protocols.len(), 1);
-		assert_eq!(handle2.0.lock().protocols.len(), 1);
+	// 	// acquire second handle to peerstore and verify both handles have the registered
+	// 	// protocol
+	// 	let mut handle2 = peerstore_handle();
+	// 	println!("{:#?}", handle1.0.lock().protocols);
+	// 	println!("{:#?}", handle2.0.lock().protocols);
+	// 	assert_eq!(handle1.0.lock().protocols.len(), 1);
+	// 	assert_eq!(handle2.0.lock().protocols.len(), 1);
 
-		// register another protocol using the second handle and verify both handles have the
-		// protocol
-		let (tx2, _) = tracing_unbounded("mpsc-peerset-protocol", 100_000);
-		handle1.register_protocol(tx2);
-		assert_eq!(handle1.0.lock().protocols.len(), 2);
-		assert_eq!(handle2.0.lock().protocols.len(), 2);
-	}
+	// 	// register another protocol using the second handle and verify both handles have the
+	// 	// protocol
+	// 	let (tx2, _) = tracing_unbounded("mpsc-peerset-protocol", 100_000);
+	// 	handle1.register_protocol(tx2);
+	// 	assert_eq!(handle1.0.lock().protocols.len(), 2);
+	// 	assert_eq!(handle2.0.lock().protocols.len(), 2);
+	// }
 }

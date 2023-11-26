@@ -500,7 +500,6 @@ struct DhtValueFoundTester {
 	pub local_worker: Option<
 		Worker<
 			TestApi,
-			TestNetwork,
 			sp_runtime::generic::Block<
 				sp_runtime::generic::Header<u64, sp_runtime::traits::BlakeTwo256>,
 				substrate_test_runtime_client::runtime::Extrinsic,

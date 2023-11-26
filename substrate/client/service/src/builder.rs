@@ -47,7 +47,7 @@ use sc_network::{
 		metrics::Metrics as NetworkMetrics,
 		traits::{PeerStore, RequestResponseConfig},
 	},
-	NetworkBackend, NetworkStateInfo, NetworkStatusProvider,
+	NetworkBackend, NetworkStateInfo,
 };
 use sc_network_bitswap::BitswapRequestHandler;
 use sc_network_common::role::Roles;

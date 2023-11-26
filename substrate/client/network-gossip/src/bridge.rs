@@ -382,6 +382,7 @@ mod tests {
 	#[derive(Clone, Default)]
 	struct TestNetworkInner {}
 
+	#[async_trait::async_trait]
 	impl NetworkPeers for TestNetwork {
 		fn set_authorized_peers(&self, _peers: HashSet<PeerId>) {
 			unimplemented!();
@@ -449,6 +450,10 @@ mod tests {
 			Roles::decode_all(&mut &handshake[..])
 				.ok()
 				.and_then(|role| Some(ObservedRole::from(role)))
+		}
+
+		async fn reserved_peers(&self) -> Result<Vec<PeerId>, ()> {
+			unimplemented!();
 		}
 	}
 
