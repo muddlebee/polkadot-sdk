@@ -308,14 +308,14 @@ pub async fn build_system_rpc_future<
 				};
 			},
 			sc_rpc::system::Request::NetworkReservedPeers(sender) => {
-				// let reserved_peers = network_service.reserved_peers().await;
-				// if let Ok(reserved_peers) = reserved_peers {
-				// 	let reserved_peers =
-				// 		reserved_peers.iter().map(|peer_id| peer_id.to_base58()).collect();
-				// 	let _ = sender.send(reserved_peers);
-				// } else {
-				// 	break
-				// }
+				let reserved_peers = network_service.reserved_peers().await;
+				if let Ok(reserved_peers) = reserved_peers {
+					let reserved_peers =
+						reserved_peers.iter().map(|peer_id| peer_id.to_base58()).collect();
+					let _ = sender.send(reserved_peers);
+				} else {
+					break
+				}
 			},
 			sc_rpc::system::Request::NodeRoles(sender) => {
 				use sc_rpc::system::NodeRole;

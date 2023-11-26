@@ -277,6 +277,7 @@ impl NetworkStatusProvider for Litep2pNetworkService {
 // Manual implementation to avoid extra boxing here
 // TODO: functions modifying peerset state could be modified to call peerset directly if the
 // `Multiaddr` only contains a `PeerId`
+#[async_trait::async_trait]
 impl NetworkPeers for Litep2pNetworkService {
 	fn set_authorized_peers(&self, peers: HashSet<PeerId>) {
 		let _ = self.cmd_tx.unbounded_send(NetworkServiceCommand::SetReservedPeers {
@@ -398,6 +399,24 @@ impl NetworkPeers for Litep2pNetworkService {
 				self.peer_store_handle.peer_role(&(peer.into()))
 			},
 		}
+	}
+
+	/// Get the list of reserved peers.
+	///
+	/// Returns an error if the `NetworkWorker` is no longer running.
+	async fn reserved_peers(&self) -> Result<Vec<PeerId>, ()> {
+		let Some(handle) = self.peerset_handles.get(&self.block_announce_protocol) else {
+			return Err(());
+		};
+		let (tx, rx) = oneshot::channel();
+
+		handle
+			.tx
+			.unbounded_send(PeersetCommand::GetReservedPeers { tx })
+			.map_err(|_| ())?;
+
+		// the channel can only be closed if `Peerset` no longer exists
+		rx.await.map_err(|_| ())
 	}
 }
 

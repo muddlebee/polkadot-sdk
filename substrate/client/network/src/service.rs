@@ -826,18 +826,6 @@ impl<B: BlockT + 'static, H: ExHashT> NetworkService<B, H> {
 		}
 	}
 
-	/// Get the list of reserved peers.
-	///
-	/// Returns an error if the `NetworkWorker` is no longer running.
-	pub async fn reserved_peers(&self) -> Result<Vec<PeerId>, ()> {
-		let (tx, rx) = oneshot::channel();
-
-		self.sync_protocol_handle.reserved_peers(tx);
-
-		// The channel can only be closed if `ProtocolController` no longer exists.
-		rx.await.map_err(|_| ())
-	}
-
 	/// Utility function to extract `PeerId` from each `Multiaddr` for peer set updates.
 	///
 	/// Returns an `Err` if one of the given addresses is invalid or contains an
@@ -966,6 +954,7 @@ where
 	}
 }
 
+#[async_trait::async_trait]
 impl<B, H> NetworkPeers for NetworkService<B, H>
 where
 	B: BlockT + 'static,
@@ -1127,6 +1116,20 @@ where
 				self.peer_store_handle.peer_role(&(peer_id.into()))
 			},
 		}
+	}
+
+	/// Get the list of reserved peers.
+	///
+	/// Returns an error if the `NetworkWorker` is no longer running.
+	async fn reserved_peers(&self) -> Result<Vec<sc_network_types::PeerId>, ()> {
+		let (tx, rx) = oneshot::channel();
+
+		self.sync_protocol_handle.reserved_peers(tx);
+
+		// The channel can only be closed if `ProtocolController` no longer exists.
+		rx.await
+			.map(|peers| peers.into_iter().map(From::from).collect())
+			.map_err(|_| ())
 	}
 }
 

@@ -298,6 +298,7 @@ where
 }
 
 /// Provides low-level API for manipulating network peers.
+#[async_trait::async_trait]
 pub trait NetworkPeers {
 	/// Set authorized peers.
 	///
@@ -395,9 +396,15 @@ pub trait NetworkPeers {
 	/// decoded into a role, the role queried from `PeerStore` and if the role is not stored
 	/// there either, `None` is returned and the peer should be discarded.
 	fn peer_role(&self, peer_id: PeerId, handshake: Vec<u8>) -> Option<ObservedRole>;
+
+	/// Get the list of reserved peers.
+	///
+	/// Returns an error if the `NetworkWorker` is no longer running.
+	async fn reserved_peers(&self) -> Result<Vec<PeerId>, ()>;
 }
 
 // Manual implementation to avoid extra boxing here
+#[async_trait::async_trait]
 impl<T> NetworkPeers for Arc<T>
 where
 	T: ?Sized,
@@ -473,6 +480,16 @@ where
 
 	fn peer_role(&self, peer_id: PeerId, handshake: Vec<u8>) -> Option<ObservedRole> {
 		T::peer_role(self, peer_id, handshake)
+	}
+
+	fn reserved_peers<'life0, 'async_trait>(
+		&'life0 self,
+	) -> Pin<Box<dyn Future<Output = Result<Vec<PeerId>, ()>> + Send + 'async_trait>>
+	where
+		'life0: 'async_trait,
+		Self: 'async_trait,
+	{
+		T::reserved_peers(self)
 	}
 }
 

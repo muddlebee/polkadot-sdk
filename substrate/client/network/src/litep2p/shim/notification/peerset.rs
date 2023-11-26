@@ -37,7 +37,7 @@ use crate::{
 	ProtocolName,
 };
 
-use futures::{future::BoxFuture, stream::FuturesUnordered, Stream, StreamExt};
+use futures::{channel::oneshot, future::BoxFuture, stream::FuturesUnordered, Stream, StreamExt};
 use futures_timer::Delay;
 
 use litep2p::protocol::notification::NotificationError;
@@ -140,6 +140,12 @@ pub enum PeersetCommand {
 	DisconnectPeer {
 		/// Peer ID.
 		peer: PeerId,
+	},
+
+	/// Get reserved peers.
+	GetReservedPeers {
+		/// `oneshot::Sender` for sending the current set of reserved peers.
+		tx: oneshot::Sender<Vec<PeerId>>,
 	},
 }
 
@@ -1012,6 +1018,9 @@ impl Stream for Peerset {
 							peers: peers_to_remove,
 						}))
 					}
+				},
+				PeersetCommand::GetReservedPeers { tx } => {
+					let _ = tx.send(self.reserved_peers.iter().cloned().collect());
 				},
 			}
 		}
