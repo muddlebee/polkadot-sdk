@@ -15716,6 +15716,7 @@ dependencies = [
  "async-trait",
  "asynchronous-codec",
  "bytes",
+ "cid 0.9.0",
  "either",
  "fnv",
  "futures",
@@ -15732,6 +15733,8 @@ dependencies = [
  "parking_lot 0.12.1",
  "partial_sort",
  "pin-project",
+ "prost",
+ "prost-build",
  "rand 0.8.5",
  "sc-client-api",
  "sc-network-common",
@@ -15761,33 +15764,6 @@ dependencies = [
  "void",
  "wasm-timer",
  "zeroize",
-]
-
-[[package]]
-name = "sc-network-bitswap"
-version = "0.10.0-dev"
-dependencies = [
- "async-channel 1.9.0",
- "cid 0.9.0",
- "futures",
- "libp2p-identity",
- "log",
- "prost",
- "prost-build",
- "sc-block-builder",
- "sc-client-api",
- "sc-consensus",
- "sc-network",
- "sc-network-types",
- "sp-blockchain",
- "sp-consensus",
- "sp-core",
- "sp-runtime",
- "substrate-test-runtime",
- "substrate-test-runtime-client",
- "thiserror",
- "tokio",
- "unsigned-varint",
 ]
 
 [[package]]
@@ -16176,7 +16152,6 @@ dependencies = [
  "sc-informant",
  "sc-keystore",
  "sc-network",
- "sc-network-bitswap",
  "sc-network-common",
  "sc-network-light",
  "sc-network-sync",

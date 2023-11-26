@@ -49,7 +49,6 @@ use sc_network::{
 	},
 	NetworkBackend, NetworkStateInfo,
 };
-use sc_network_bitswap::BitswapRequestHandler;
 use sc_network_common::role::Roles;
 use sc_network_light::light_client_requests::handler::LightClientRequestHandler;
 use sc_network_sync::{
@@ -840,14 +839,12 @@ where
 		net_config.add_request_response_protocol(config);
 	}
 
-	let bitswap_config = if config.network.ipfs_server {
+	let bitswap_config = config.network.ipfs_server.then_some({
 		let (handler, config) = TNet::bitswap_server(client.clone());
 		spawn_handle.spawn("bitswap-request-handler", Some("networking"), handler);
 
-		Some(config)
-	} else {
-		None
-	};
+		config
+	});
 
 	// create transactions protocol and add it to the list of supported protocols of
 	let (transactions_handler_proto, transactions_config) =

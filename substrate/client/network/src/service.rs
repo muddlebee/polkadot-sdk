@@ -29,6 +29,7 @@
 
 use crate::{
 	behaviour::{self, Behaviour, BehaviourOut},
+	bitswap::BitswapRequestHandler,
 	config::{
 		parse_addr, FullNetworkConfiguration, IncomingRequest, MultiaddrWithPeerId,
 		NonDefaultSetConfig, NotificationHandshake, Params, SetConfig, TransportConfig,
@@ -179,11 +180,11 @@ where
 	}
 
 	fn bitswap_server(
-		_client: Arc<dyn BlockBackend<B> + Send + Sync>,
+		client: Arc<dyn BlockBackend<B> + Send + Sync>,
 	) -> (Pin<Box<dyn Future<Output = ()> + Send>>, Self::BitswapConfig) {
-		todo!("`sc-network-bitswap` has to be moved back to `sc-network`");
-		// let (handler, protocol_config) = BitswapRequestHandler::new(client.clone());
-		// (Box::pin(async move { handler.run().await }), protocol_config)
+		let (handler, protocol_config) = BitswapRequestHandler::new(client.clone());
+
+		(Box::pin(async move { handler.run().await }), protocol_config)
 	}
 
 	/// Create notification protocol configuration.
