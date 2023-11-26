@@ -940,7 +940,7 @@ pub fn new_full<
 				transaction_pool: Some(OffchainTransactionPoolFactory::new(
 					transaction_pool.clone(),
 				)),
-				network_provider: Arc::new(network.clone()), // TODO: get rid of this if possible
+				network_provider: network.clone(),
 				is_validator: role.is_authority(),
 				enable_http_requests: false,
 				custom_extensions: move |_| vec![],
@@ -992,7 +992,7 @@ pub fn new_full<
 		backend: backend.clone(),
 		client: client.clone(),
 		keystore: keystore_container.keystore(),
-		network: Arc::new(network.clone()), // TODO: get rid of this if possible
+		network: network.clone(),
 		sync_service: sync_service.clone(),
 		rpc_builder: Box::new(rpc_extensions_builder),
 		transaction_pool: transaction_pool.clone(),
@@ -1059,7 +1059,7 @@ pub fn new_full<
 					..Default::default()
 				},
 				client.clone(),
-				Arc::new(network.clone()), // TODO: get rid of this if possible
+				network.clone(),
 				Box::pin(dht_event_stream),
 				authority_discovery_role,
 				prometheus_registry.clone(),
@@ -1215,7 +1215,7 @@ pub fn new_full<
 	if let Some(notification_service) = beefy_notification_service {
 		let justifications_protocol_name = beefy_on_demand_justifications_handler.protocol_name();
 		let network_params = beefy::BeefyNetworkParams {
-			network: Arc::new(network.clone()), // TODO: get rid of this if possible
+			network: Arc::new(network.clone()),
 			sync: sync_service.clone(),
 			gossip_protocol_name: beefy_gossip_proto_name,
 			justifications_protocol_name,

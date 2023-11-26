@@ -18,11 +18,10 @@
 
 use std::{collections::HashSet, str::FromStr, sync::Arc, thread::sleep};
 
-use crate::NetworkProvider;
 use codec::{Decode, Encode};
 use futures::Future;
 pub use http::SharedClient;
-use sc_network::Multiaddr;
+use sc_network::{service::traits::NetworkService, Multiaddr};
 use sc_network_types::PeerId;
 use sp_core::{
 	offchain::{
@@ -43,7 +42,7 @@ mod timestamp;
 /// (which are not supported currently).
 pub(crate) struct Api {
 	/// A provider for substrate networking.
-	network_provider: Arc<dyn NetworkProvider + Send + Sync>,
+	network_provider: Arc<dyn NetworkService>,
 	/// Is this node a potential validator?
 	is_validator: bool,
 	/// Everything HTTP-related is handled by a different struct.
@@ -199,7 +198,7 @@ pub(crate) struct AsyncApi {
 impl AsyncApi {
 	/// Creates new Offchain extensions API implementation and the asynchronous processing part.
 	pub fn new(
-		network_provider: Arc<dyn NetworkProvider + Send + Sync>,
+		network_provider: Arc<dyn NetworkService>,
 		is_validator: bool,
 		shared_http_client: SharedClient,
 	) -> (Api, Self) {

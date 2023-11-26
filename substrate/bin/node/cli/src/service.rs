@@ -465,7 +465,7 @@ pub fn new_full_base<N: NetworkBackend<Block, <Block as BlockT>::Hash>>(
 		backend: backend.clone(),
 		client: client.clone(),
 		keystore: keystore_container.keystore(),
-		network: Arc::new(network.clone()), // TODO: get rid of if possible
+		network: network.clone(),
 		rpc_builder: Box::new(rpc_builder),
 		transaction_pool: transaction_pool.clone(),
 		task_manager: &mut task_manager,
@@ -574,7 +574,7 @@ pub fn new_full_base<N: NetworkBackend<Block, <Block as BlockT>::Hash>>(
 					..Default::default()
 				},
 				client.clone(),
-				Arc::new(network.clone()), // TODO: get rid of if possible
+				network.clone(),
 				Box::pin(dht_event_stream),
 				authority_discovery_role,
 				prometheus_registry.clone(),
@@ -663,7 +663,7 @@ pub fn new_full_base<N: NetworkBackend<Block, <Block as BlockT>::Hash>>(
 				transaction_pool: Some(OffchainTransactionPoolFactory::new(
 					transaction_pool.clone(),
 				)),
-				network_provider: Arc::new(network.clone()), // TODO: get rid of if possible
+				network_provider: network.clone(),
 				is_validator: role.is_authority(),
 				enable_http_requests: true,
 				custom_extensions: move |_| {

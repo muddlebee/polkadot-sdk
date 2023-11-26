@@ -43,7 +43,7 @@ use futures::{
 };
 use parking_lot::Mutex;
 use sc_client_api::BlockchainEvents;
-use sc_network::{NetworkPeers, NetworkStateInfo};
+use sc_network::service::traits::NetworkService;
 use sc_transaction_pool_api::OffchainTransactionPoolFactory;
 use sp_api::{ApiExt, ProvideRuntimeApi};
 use sp_core::{offchain, traits::SpawnNamed};
@@ -58,12 +58,6 @@ pub use sp_core::offchain::storage::OffchainDb;
 pub use sp_offchain::{OffchainWorkerApi, STORAGE_PREFIX};
 
 const LOG_TARGET: &str = "offchain-worker";
-
-/// NetworkProvider provides [`OffchainWorkers`] with all necessary hooks into the
-/// underlying Substrate networking.
-pub trait NetworkProvider: NetworkStateInfo + NetworkPeers {}
-
-impl<T> NetworkProvider for T where T: NetworkStateInfo + NetworkPeers {}
 
 /// Special type that implements [`OffchainStorage`](offchain::OffchainStorage).
 ///
@@ -103,7 +97,7 @@ pub struct OffchainWorkerOptions<RA, Block: traits::Block, Storage, CE> {
 	/// Provides access to the transaction pool.
 	pub transaction_pool: Option<OffchainTransactionPoolFactory<Block>>,
 	/// Provides access to network information.
-	pub network_provider: Arc<dyn NetworkProvider + Send + Sync>,
+	pub network_provider: Arc<dyn NetworkService>,
 	/// Is the node running as validator?
 	pub is_validator: bool,
 	/// Enable http requests from offchain workers?
@@ -135,7 +129,7 @@ pub struct OffchainWorkers<RA, Block: traits::Block, Storage> {
 	keystore: Option<KeystorePtr>,
 	offchain_db: Option<OffchainDb<Storage>>,
 	transaction_pool: Option<OffchainTransactionPoolFactory<Block>>,
-	network_provider: Arc<dyn NetworkProvider + Send + Sync>,
+	network_provider: Arc<dyn NetworkService>,
 	is_validator: bool,
 	custom_extensions: Box<dyn Fn(Block::Hash) -> Vec<Box<dyn Extension>> + Send>,
 }
