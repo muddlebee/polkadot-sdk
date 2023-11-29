@@ -409,7 +409,10 @@ impl NotificationService for NotificationProtocol {
 					} => {
 						register_notification_received(&self.metrics, &self.protocol, notification.len());
 
-						return Some(SubstrateNotificationEvent::NotificationReceived { peer: peer.into(), notification });
+						return Some(SubstrateNotificationEvent::NotificationReceived {
+							peer: peer.into(),
+							notification: notification.to_vec(),
+						});
 					}
 				},
 				result = self.pending_validations.next(), if !self.pending_validations.is_empty() => {

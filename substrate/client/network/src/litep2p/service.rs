@@ -20,7 +20,10 @@
 
 use crate::{
 	config::MultiaddrWithPeerId,
-	litep2p::shim::notification::{config::ProtocolControlHandle, peerset::PeersetCommand},
+	litep2p::shim::{
+		notification::{config::ProtocolControlHandle, peerset::PeersetCommand},
+		request_response::OutboundRequest,
+	},
 	multiaddr::Protocol,
 	network_state::NetworkState,
 	peer_store::{PeerStoreHandle, PeerStoreProvider},
@@ -73,24 +76,6 @@ pub enum NetworkServiceCommand {
 	Status {
 		/// `oneshot::Sender` for sending the status.
 		tx: oneshot::Sender<NetworkStatus>,
-	},
-
-	/// Send request to remote peer.
-	StartRequest {
-		/// Peer Id.
-		peer: PeerId,
-
-		/// Protocol.
-		protocol: ProtocolName,
-
-		/// Request.
-		request: Vec<u8>,
-
-		/// Oneshot channel for sending the response.
-		tx: oneshot::Sender<Result<Vec<u8>, RequestFailure>>,
-
-		/// Whether the dial or immediately fail the request if `peer` is not connected.
-		connect: IfDisconnected,
 	},
 
 	/// Add `peers` to `protocol`'s reserved set.
@@ -183,6 +168,9 @@ pub struct Litep2pNetworkService {
 
 	/// Name for the block announce protocol.
 	block_announce_protocol: ProtocolName,
+
+	/// Installed request-response protocols.
+	request_response_protocols: HashMap<ProtocolName, TracingUnboundedSender<OutboundRequest>>,
 }
 
 impl Litep2pNetworkService {
@@ -194,6 +182,7 @@ impl Litep2pNetworkService {
 		peer_store_handle: Arc<dyn PeerStoreProvider>,
 		peerset_handles: HashMap<ProtocolName, ProtocolControlHandle>,
 		block_announce_protocol: ProtocolName,
+		request_response_protocols: HashMap<ProtocolName, TracingUnboundedSender<OutboundRequest>>,
 	) -> Self {
 		Self {
 			local_peer_id,
@@ -202,6 +191,7 @@ impl Litep2pNetworkService {
 			peer_store_handle,
 			peerset_handles,
 			block_announce_protocol,
+			request_response_protocols,
 		}
 	}
 }
@@ -406,7 +396,7 @@ impl NetworkPeers for Litep2pNetworkService {
 	/// Returns an error if the `NetworkWorker` is no longer running.
 	async fn reserved_peers(&self) -> Result<Vec<PeerId>, ()> {
 		let Some(handle) = self.peerset_handles.get(&self.block_announce_protocol) else {
-			return Err(());
+			return Err(())
 		};
 		let (tx, rx) = oneshot::channel();
 
@@ -462,16 +452,18 @@ impl NetworkRequest for Litep2pNetworkService {
 		peer: PeerId,
 		protocol: ProtocolName,
 		request: Vec<u8>,
-		tx: oneshot::Sender<Result<Vec<u8>, RequestFailure>>,
+		sender: oneshot::Sender<Result<Vec<u8>, RequestFailure>>,
 		connect: IfDisconnected,
 	) {
-		let _ = self.cmd_tx.unbounded_send(NetworkServiceCommand::StartRequest {
-			peer,
-			protocol,
-			request,
-			tx,
-			connect,
-		});
+		match self.request_response_protocols.get(&protocol) {
+			Some(tx) => {
+				let _ = tx.unbounded_send(OutboundRequest::new(peer, request, sender, connect));
+			},
+			None => log::warn!(
+				target: LOG_TARGET,
+				"{protocol} doesn't exist, cannot send request to {peer:?}"
+			),
+		}
 	}
 }
 

@@ -37,9 +37,7 @@ use crate::{
 				config::{NotificationProtocolConfig, ProtocolControlHandle},
 				peerset::PeersetCommand,
 			},
-			request_response::{
-				RequestResponseConfig, RequestResponseProtocol, RequestResponseProtocolSet,
-			},
+			request_response::{RequestResponseConfig, RequestResponseProtocol},
 		},
 	},
 	multiaddr::Protocol,
@@ -129,9 +127,6 @@ pub struct Litep2pNetworkBackend {
 
 	/// `litep2p` configuration.
 	config: Litep2pConfig,
-
-	/// Request-response protocol set.
-	protocol_set: RequestResponseProtocolSet,
 
 	/// Discovery.
 	discovery: Discovery,
@@ -269,13 +264,13 @@ impl Litep2pNetworkBackend {
 			.unzip();
 
 		builder
-			.with_websocket(WebSocketTransportConfig {
-				listen_addresses: websocket
-					.into_iter()
-					.filter_map(|address| address)
-					.collect::<Vec<_>>(),
-				..Default::default()
-			})
+			// .with_websocket(WebSocketTransportConfig {
+			// 	listen_addresses: websocket
+			// 		.into_iter()
+			// 		.filter_map(|address| address)
+			// 		.collect::<Vec<_>>(),
+			// 	..Default::default()
+			// })
 			.with_tcp(TcpTransportConfig {
 				listen_addresses: tcp.into_iter().filter_map(|address| address).collect::<Vec<_>>(),
 				..Default::default()
@@ -483,7 +478,7 @@ impl<B: BlockT + 'static, H: ExHashT> NetworkBackend<B, H> for Litep2pNetworkBac
 		// initialize request-response protocols
 		//
 		// TODO: explanation
-		let mut protocol_set = RequestResponseProtocolSet::new();
+		let mut request_response_tx = HashMap::new();
 
 		for config in request_response_protocols {
 			let (protocol_config, handle) =
@@ -498,15 +493,16 @@ impl<B: BlockT + 'static, H: ExHashT> NetworkBackend<B, H> for Litep2pNetworkBac
 				.build();
 
 			config_builder = config_builder.with_request_response_protocol(protocol_config);
-			protocol_set.register_protocol(
+			let (protocol, tx) = RequestResponseProtocol::new(
 				config.protocol_name.clone(),
-				RequestResponseProtocol::new(
-					config.protocol_name,
-					handle,
-					peerstore_handle(),
-					config.inbound_queue.expect("inbound queue to exist"),
-				),
+				handle,
+				peerstore_handle(),
+				config.inbound_queue.expect("inbound queue to exist"),
 			);
+			params.spawn_handle.run(Box::pin(async move {
+				protocol.run().await;
+			}));
+			request_response_tx.insert(config.protocol_name, tx);
 		}
 
 		// TODO: clean up this code
@@ -569,6 +565,7 @@ impl<B: BlockT + 'static, H: ExHashT> NetworkBackend<B, H> for Litep2pNetworkBac
 			params.peer_store.clone(),
 			notif_protocols.clone(),
 			block_announce_protocol.clone(),
+			request_response_tx,
 		));
 
 		Ok(Self {
@@ -578,7 +575,6 @@ impl<B: BlockT + 'static, H: ExHashT> NetworkBackend<B, H> for Litep2pNetworkBac
 			listen_addresses,
 			config: config_builder.build(),
 			notif_protocols,
-			protocol_set,
 			discovery,
 			block_announce_protocol: block_announce_protocol.clone(),
 		})
@@ -656,7 +652,6 @@ impl<B: BlockT + 'static, H: ExHashT> NetworkBackend<B, H> for Litep2pNetworkBac
 			listen_addresses: self.listen_addresses,
 			peerset_handles: self.notif_protocols,
 			discovery: self.discovery,
-			protocol_set: self.protocol_set,
 			pending_put_values: HashMap::new(),
 			pending_get_values: HashMap::new(),
 			peerstore_handle: self.peer_store_handle,
@@ -685,9 +680,6 @@ struct Litep2pBackend {
 
 	/// `Peerset` handles to notification protocols.
 	peerset_handles: HashMap<ProtocolName, ProtocolControlHandle>,
-
-	/// Request-response protocol set.
-	protocol_set: RequestResponseProtocolSet,
 
 	/// Pending `GET_VALUE` queries.
 	pending_get_values: HashMap<QueryId, RecordKey>,
@@ -797,15 +789,6 @@ impl Litep2pBackend {
 								total_bytes_inbound: self.litep2p.bandwidth_sink().inbound() as u64,
 								total_bytes_outbound: self.litep2p.bandwidth_sink().outbound() as u64,
 							});
-						}
-						NetworkServiceCommand::StartRequest {
-							peer,
-							protocol,
-							request,
-							tx,
-							connect,
-						} => {
-							self.protocol_set.send_request(peer, protocol, request, tx, connect).await;
 						}
 						NetworkServiceCommand::AddPeersToReservedSet {
 							protocol,
@@ -982,7 +965,6 @@ impl Litep2pBackend {
 					}
 					_ => {}
 				},
-				event = self.protocol_set.next() => {},
 			}
 		}
 	}

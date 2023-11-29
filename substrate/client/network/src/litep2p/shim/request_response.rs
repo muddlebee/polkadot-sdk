@@ -36,8 +36,10 @@ use litep2p::{
 	},
 	types::RequestId,
 };
+use tokio_stream::StreamMap;
 
 use sc_network_types::PeerId;
+use sc_utils::mpsc::{tracing_unbounded, TracingUnboundedReceiver, TracingUnboundedSender};
 
 use std::{
 	collections::{HashMap, VecDeque},
@@ -50,6 +52,34 @@ use std::{
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "sub-libp2p::request-response";
+
+/// Type containing
+#[derive(Debug)]
+pub struct OutboundRequest {
+	/// Peer ID.
+	peer: PeerId,
+
+	/// Request.
+	request: Vec<u8>,
+
+	/// `oneshot::Sender` for sending the received response, or failure.
+	sender: oneshot::Sender<Result<Vec<u8>, RequestFailure>>,
+
+	/// What should the node do if `peer` is disconnected.
+	dial_behavior: IfDisconnected,
+}
+
+impl OutboundRequest {
+	/// Create new [`OutboundRequest`].
+	pub fn new(
+		peer: PeerId,
+		request: Vec<u8>,
+		sender: oneshot::Sender<Result<Vec<u8>, RequestFailure>>,
+		dial_behavior: IfDisconnected,
+	) -> Self {
+		OutboundRequest { peer, request, sender, dial_behavior }
+	}
+}
 
 /// Request-response protocol configuration.
 ///
@@ -125,6 +155,9 @@ pub struct RequestResponseProtocol {
 	pending_outbound_responses: FuturesUnordered<
 		BoxFuture<'static, (litep2p::PeerId, RequestId, Result<OutgoingResponse, ()>)>,
 	>,
+
+	/// RX channel for receiving info for outbound requests.
+	request_rx: TracingUnboundedReceiver<OutboundRequest>,
 }
 
 impl RequestResponseProtocol {
@@ -134,19 +167,25 @@ impl RequestResponseProtocol {
 		handle: RequestResponseHandle,
 		peerstore_handle: PeerstoreHandle,
 		inbound_queue: async_channel::Sender<IncomingRequest>,
-	) -> Self {
-		Self {
-			protocol,
-			handle,
-			inbound_queue,
-			peerstore_handle,
-			pending_inbound_responses: HashMap::new(),
-			pending_outbound_responses: FuturesUnordered::new(),
-		}
+	) -> (Self, TracingUnboundedSender<OutboundRequest>) {
+		let (request_tx, request_rx) = tracing_unbounded("outbound-requests", 10_000);
+
+		(
+			Self {
+				protocol,
+				handle,
+				request_rx,
+				inbound_queue,
+				peerstore_handle,
+				pending_inbound_responses: HashMap::new(),
+				pending_outbound_responses: FuturesUnordered::new(),
+			},
+			request_tx,
+		)
 	}
 
 	/// Send `request` to `peer`.
-	pub async fn send_request(
+	async fn on_send_request(
 		&mut self,
 		peer: PeerId,
 		request: Vec<u8>,
@@ -159,6 +198,8 @@ impl RequestResponseProtocol {
 		};
 
 		// sending the request only fails if the protocol has exited
+		// TODO: don't block and if the channel is full, mark the request as rejected
+		// TODO: or make a future which reserves a slot on the channel and sends it
 		let request_id = self
 			.handle
 			.send_request(peer.into(), request, dial_options)
@@ -168,239 +209,204 @@ impl RequestResponseProtocol {
 
 		Ok(())
 	}
-}
 
-impl Stream for RequestResponseProtocol {
-	type Item = void::Void;
+	/// Handle inbound request from `peer`
+	fn on_inbound_request(
+		&mut self,
+		peer: litep2p::PeerId,
+		fallback: Option<litep2p::ProtocolName>,
+		request_id: RequestId,
+		request: Vec<u8>,
+	) {
+		log::trace!(
+			target: LOG_TARGET,
+			"{}: request received from {peer:?} ({fallback:?} {request_id:?}), request size {:?}",
+			self.protocol,
+			request.len(),
+		);
+		let (tx, rx) = oneshot::channel();
 
-	fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-		let this = Pin::into_inner(self);
+		match self.inbound_queue.try_send(IncomingRequest {
+			peer: peer.into(),
+			payload: request,
+			pending_response: tx,
+		}) {
+			Ok(_) => {
+				self.pending_outbound_responses.push(Box::pin(async move {
+					(peer, request_id, rx.await.map(|response| response).map_err(|_| ()))
+				}));
+			},
+			Err(_) => {
+				log::trace!(
+					target: LOG_TARGET,
+					"{:?}: dropping request from {peer:?} ({request_id:?}), inbound queue full",
+					self.protocol,
+				);
 
-		// handle event's from litep2p's `RequestResponseHandle`.
-		while let Poll::Ready(event) = Pin::new(&mut this.handle).poll_next(cx) {
-			match event {
-				None => return Poll::Ready(None),
-				Some(event) => match event {
-					RequestResponseEvent::RequestReceived {
+				self.handle.reject_request(request_id);
+			},
+		}
+	}
+
+	/// Handle received inbound response.
+	fn on_inbound_response(
+		&mut self,
+		peer: litep2p::PeerId,
+		request_id: RequestId,
+		response: Vec<u8>,
+	) {
+		match self.pending_inbound_responses.remove(&request_id) {
+			None => log::warn!(
+				target: LOG_TARGET,
+				"{:?}: response received for {peer:?} but {request_id:?} doesn't exist",
+				self.protocol,
+			),
+			Some(tx) => {
+				log::trace!(
+					target: LOG_TARGET,
+					"{:?}: response received for {peer:?} ({request_id:?}), response size {:?}",
+					self.protocol,
+					response.len(),
+				);
+
+				let _ = tx.send(Ok(response));
+			},
+		}
+	}
+
+	/// Handle failed outbound request.
+	fn on_request_failed(
+		&mut self,
+		peer: litep2p::PeerId,
+		request_id: RequestId,
+		error: RequestResponseError,
+	) {
+		log::debug!(
+			target: LOG_TARGET,
+			"{:?}: request failed for {peer:?} ({request_id:?}): {error:?}",
+			self.protocol
+		);
+
+		let Some(tx) = self.pending_inbound_responses.remove(&request_id) else {
+			log::warn!(
+				target: LOG_TARGET,
+				"{:?}: request failed for peer {peer:?} but {request_id:?} doesn't exist",
+				self.protocol,
+			);
+
+			return
+		};
+
+		let error = match error {
+			RequestResponseError::NotConnected => Some(RequestFailure::NotConnected),
+			RequestResponseError::Rejected | RequestResponseError::Timeout =>
+				Some(RequestFailure::Refused),
+			RequestResponseError::Canceled => {
+				log::debug!(
+					target: LOG_TARGET,
+					"{}: request canceled by local node to {peer:?} ({request_id:?})",
+					self.protocol,
+				);
+				None
+			},
+			RequestResponseError::TooLargePayload => {
+				log::warn!(
+					target: LOG_TARGET,
+					"{}: tried to send too large request to {peer:?} ({request_id:?})",
+					self.protocol,
+				);
+				Some(RequestFailure::Refused)
+			},
+		};
+
+		if let Some(error) = error {
+			let _ = tx.send(Err(error));
+		}
+	}
+
+	/// Handle outbound response.
+	fn on_outbound_response(
+		&mut self,
+		peer: litep2p::PeerId,
+		request_id: RequestId,
+		response: OutgoingResponse,
+	) {
+		let OutgoingResponse { result, reputation_changes, sent_feedback } = response;
+
+		for change in reputation_changes {
+			log::error!(target: LOG_TARGET, "{}: report {peer:?} {change:?}", self.protocol);
+			self.peerstore_handle.report_peer(peer.into(), change.value);
+		}
+
+		match result {
+			Err(error) => {
+				log::debug!(
+					target: LOG_TARGET,
+					"{}: response rejected ({request_id:?}) for {peer:?}: {error:?}",
+					self.protocol,
+				);
+			},
+			Ok(response) => {
+				log::trace!(
+					target: LOG_TARGET,
+					"{}: send response ({request_id:?}) to {peer:?}, response size {}",
+					self.protocol,
+					response.len(),
+				);
+
+				match sent_feedback {
+					None => self.handle.send_response(request_id, response),
+					Some(feedback) =>
+						self.handle.send_response_with_feedback(request_id, response, feedback),
+				}
+			},
+		}
+	}
+
+	/// Start running event loop of the request-response protocol.
+	pub async fn run(mut self) {
+		loop {
+			tokio::select! {
+				event = self.handle.next() => match event {
+					None => return,
+					Some(RequestResponseEvent::RequestReceived {
 						peer,
 						fallback,
 						request_id,
 						request,
-					} => {
-						log::trace!(
-							target: LOG_TARGET,
-							"{:?}: request received from {peer:?} ({request_id:?}), request size {:?}",
-							this.protocol,
-							request.len(),
-						);
-						let (tx, rx) = oneshot::channel();
-
-						match this.inbound_queue.try_send(IncomingRequest {
-							peer: peer.into(),
-							payload: request,
-							pending_response: tx,
-						}) {
-							Ok(_) => {
-								this.pending_outbound_responses.push(Box::pin(async move {
-									(
-										peer,
-										request_id,
-										rx.await.map(|response| response).map_err(|_| ()),
-									)
-								}));
-							},
-							Err(_) => {
-								log::trace!(
-									target: LOG_TARGET,
-									"{:?}: dropping request from {peer:?} ({request_id:?}), inbound queue full",
-									this.protocol,
-								);
-
-								this.handle.reject_request(request_id);
-							},
-						}
+					}) => self.on_inbound_request(peer, fallback, request_id, request),
+					Some(RequestResponseEvent::ResponseReceived { peer, request_id, response }) => {
+						self.on_inbound_response(peer, request_id, response);
 					},
-					RequestResponseEvent::ResponseReceived { peer, request_id, response } =>
-						match this.pending_inbound_responses.remove(&request_id) {
-							None => log::warn!(
-								target: LOG_TARGET,
-								"{:?}: response received for {peer:?} but {request_id:?} doesn't exist",
-								this.protocol,
-							),
-							Some(tx) => {
-								log::trace!(
-									target: LOG_TARGET,
-									"{:?}: response received for {peer:?} ({request_id:?}), response size {:?}",
-									this.protocol,
-									response.len(),
-								);
-								let result = tx.send(Ok(response));
-							},
-						},
-					RequestResponseEvent::RequestFailed { peer, request_id, error } => {
-						log::debug!(
-							target: LOG_TARGET,
-							"{:?}: request failed for {peer:?} ({request_id:?}): {error:?}",
-							this.protocol
-						);
-
-						match this.pending_inbound_responses.remove(&request_id) {
-							None => log::warn!(
-								target: LOG_TARGET,
-								"{:?}: request failed for peer {peer:?} but {request_id:?} doesn't exist",
-								this.protocol,
-							),
-							Some(tx) => {
-								let error = match error {
-									RequestResponseError::NotConnected =>
-										Some(RequestFailure::NotConnected),
-									RequestResponseError::Rejected |
-									RequestResponseError::Timeout => Some(RequestFailure::Refused),
-									RequestResponseError::Canceled => {
-										log::debug!(
-											target: LOG_TARGET,
-											"{}: request canceled by local node to {peer:?} ({request_id:?})",
-											this.protocol,
-										);
-										None
-									},
-									RequestResponseError::TooLargePayload => {
-										log::warn!(
-											target: LOG_TARGET,
-											"{}: tried to send too large request to {peer:?} ({request_id:?})",
-											this.protocol,
-										);
-										Some(RequestFailure::Refused)
-									},
-								};
-
-								if let Some(error) = error {
-									let _ = tx.send(Err(error));
-								}
-							},
-						}
+					Some(RequestResponseEvent::RequestFailed { peer, request_id, error }) => {
+						self.on_request_failed(peer, request_id, error);
 					},
 				},
-			}
-		}
+				event = self.pending_outbound_responses.next(), if !self.pending_outbound_responses.is_empty() => match event {
+					None => return,
+					Some((peer, request_id, Err(_))) => {
+						log::debug!(target: LOG_TARGET, "{}: reject request ({request_id:?}) from {peer:?}", self.protocol);
 
-		// handle pending outbound responses
-		while let Poll::Ready(Some((peer, request_id, event))) =
-			this.pending_outbound_responses.poll_next_unpin(cx)
-		{
-			match event {
-				Err(_) => {
-					log::debug!(target: LOG_TARGET, "{}: reject request ({request_id:?}) from {peer:?}", this.protocol);
-					this.handle.reject_request(request_id);
-				},
-				Ok(response) => {
-					let OutgoingResponse { result, reputation_changes, sent_feedback } = response;
-
-					for change in reputation_changes {
-						log::error!(target: "sub-libp2p", "report {peer:?} {change:?}");
-						this.peerstore_handle.report_peer(peer.into(), change.value);
+						self.handle.reject_request(request_id);
 					}
-
-					match result {
-						Ok(response) => {
-							log::trace!(
-								target: LOG_TARGET,
-								"{}: send response ({request_id:?}) to {peer:?}, response size {}",
-								this.protocol,
-								response.len()
-							);
-
-							match sent_feedback {
-								None => {
-									this.handle.send_response(request_id, response);
-								},
-								Some(feedback) => {
-									this.handle.send_response_with_feedback(
-										request_id, response, feedback,
-									);
-								},
-							}
-						},
-						Err(error) => {
-							log::debug!(
-								target: LOG_TARGET,
-								"{}: response rejected ({request_id:?}) for {peer:?}: {error:?}",
-								this.protocol,
-							);
-						},
-					}
+					Some((peer, request_id, Ok(response))) => self.on_outbound_response(peer, request_id, response),
 				},
+				event = self.request_rx.next() => match event {
+					None => return,
+					Some(outbound_request) => {
+						let OutboundRequest { peer, request, sender, dial_behavior } = outbound_request;
+
+						if let Err(error) = self.on_send_request(
+							peer,
+							request,
+							sender,
+							dial_behavior,
+						).await {
+							log::debug!(target: LOG_TARGET, "failed to send request to {peer:?}: {error:?}");
+						}
+					}
+				}
 			}
 		}
-
-		Poll::Pending
-	}
-}
-
-/// Request-response protocol set.
-///
-/// Only used to provide access to the actual protocol implementations and also responsible
-/// for polling the protocols for events.
-pub struct RequestResponseProtocolSet {
-	/// Registered protocols.
-	protocols: HashMap<ProtocolName, RequestResponseProtocol>,
-}
-
-impl RequestResponseProtocolSet {
-	/// Create new [`RequestResponseProtocolSet`].
-	pub fn new() -> Self {
-		Self { protocols: HashMap::new() }
-	}
-
-	/// Register new request-response protocol.
-	pub fn register_protocol(
-		&mut self,
-		protocol_name: ProtocolName,
-		protocol: RequestResponseProtocol,
-	) {
-		self.protocols.insert(protocol_name, protocol);
-	}
-
-	/// Send `request` to `peer` over `protocol`.
-	pub async fn send_request(
-		&mut self,
-		peer: PeerId,
-		protocol: ProtocolName,
-		request: Vec<u8>,
-		tx: oneshot::Sender<Result<Vec<u8>, RequestFailure>>,
-		connect: IfDisconnected,
-	) -> Result<(), ()> {
-		match self.protocols.get_mut(&protocol) {
-			None => {
-				log::warn!(target: LOG_TARGET, "tried to send request to {peer:?} over unregisted protocol {protocol:?}");
-				return Err(())
-			},
-			Some(context) => {
-				log::trace!(target: LOG_TARGET, "send request to {peer:?} over {protocol:?}, request size {}", request.len());
-				tokio::time::timeout(
-					std::time::Duration::from_secs(10),
-					context.send_request(peer, request, tx, connect),
-				)
-				.await
-				.expect("`send_request()` took more than 10 seconds");
-				Ok(())
-			},
-		}
-	}
-}
-
-impl Stream for RequestResponseProtocolSet {
-	type Item = void::Void;
-
-	fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-		for protocol in self.protocols.values_mut() {
-			match Pin::new(protocol).poll_next(cx) {
-				Poll::Ready(Some(event)) => match event {},
-				Poll::Ready(None) => return Poll::Ready(None),
-				Poll::Pending => {},
-			}
-		}
-
-		Poll::Pending
 	}
 }
