@@ -27,7 +27,7 @@ use crate::{
 			NotificationProtocol,
 		},
 	},
-	service::{metrics::Metrics, traits::NotificationConfig},
+	service::{metrics::NotificationMetrics, traits::NotificationConfig},
 	NotificationService, ProtocolName,
 };
 
@@ -90,7 +90,7 @@ impl NotificationProtocolConfig {
 		max_notification_size: usize,
 		handshake: Option<NotificationHandshake>,
 		set_config: SetConfig,
-		metrics: Option<Metrics>,
+		metrics: NotificationMetrics,
 	) -> (Self, Box<dyn NotificationService>) {
 		// create `Peerset`/`Peerstore` handle for the protocol
 		let connected_peers = Arc::new(Default::default());

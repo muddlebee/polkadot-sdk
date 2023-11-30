@@ -803,8 +803,9 @@ pub fn new_full<
 		other: (rpc_extensions_builder, import_setup, rpc_setup, slot_duration, mut telemetry),
 	} = new_partial::<SelectRelayChain<_>>(&mut config, basics, select_chain)?;
 
-	let metrics =
-		Network::register_metrics(config.prometheus_config.as_ref().map(|cfg| &cfg.registry));
+	let metrics = Network::register_notification_metrics(
+		config.prometheus_config.as_ref().map(|cfg| &cfg.registry),
+	);
 	let shared_voter_state = rpc_setup;
 	let auth_disc_publish_non_global_ips = config.network.allow_non_globals_in_dht;
 	let mut net_config =

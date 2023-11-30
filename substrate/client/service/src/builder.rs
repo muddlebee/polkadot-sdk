@@ -44,8 +44,8 @@ use sc_keystore::LocalKeystore;
 use sc_network::{
 	config::{FullNetworkConfiguration, SyncMode},
 	service::{
-		metrics::Metrics as NetworkMetrics,
 		traits::{PeerStore, RequestResponseConfig},
+		NotificationMetrics,
 	},
 	NetworkBackend, NetworkStateInfo,
 };
@@ -695,7 +695,7 @@ pub struct BuildNetworkParams<
 	/// block request handler will be used.
 	pub block_relay: Option<BlockRelayParams<TBl, TNet>>,
 	/// Metrics.
-	pub metrics: Option<NetworkMetrics>,
+	pub metrics: NotificationMetrics,
 }
 
 /// Build the network service, the network status sinks and an RPC sender.

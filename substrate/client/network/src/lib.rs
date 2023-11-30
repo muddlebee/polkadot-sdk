@@ -273,6 +273,7 @@ pub use sc_network_common::{
 	types::ReputationChange,
 };
 pub use service::{
+	metrics::NotificationMetrics,
 	signature::Signature,
 	traits::{
 		KademliaKey, MessageSink, NetworkBackend, NetworkBlock, NetworkDHTProvider,

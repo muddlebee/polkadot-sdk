@@ -47,9 +47,9 @@ use crate::{
 	service::{
 		signature::{Signature, SigningError},
 		traits::{
-			NetworkBackend, NetworkDHTProvider, NetworkEventStream, NetworkNotification,
-			NetworkPeers, NetworkRequest, NetworkService as NetworkServiceT, NetworkSigner,
-			NetworkStateInfo, NetworkStatus, NetworkStatusProvider,
+			BandwidthSink, NetworkBackend, NetworkDHTProvider, NetworkEventStream,
+			NetworkNotification, NetworkPeers, NetworkRequest, NetworkService as NetworkServiceT,
+			NetworkSigner, NetworkStateInfo, NetworkStatus, NetworkStatusProvider,
 			NotificationSender as NotificationSenderT, NotificationSenderError,
 			NotificationSenderReady as NotificationSenderReadyT,
 		},
@@ -105,13 +105,28 @@ use std::{
 
 pub use behaviour::{InboundFailure, OutboundFailure, ResponseFailure};
 pub use libp2p::identity::{DecodingError, Keypair, PublicKey};
+pub use metrics::NotificationMetrics;
 pub use protocol::NotificationsSink;
-pub mod metrics;
 
+pub(crate) mod metrics;
 pub(crate) mod out_events;
 
 pub mod signature;
 pub mod traits;
+
+struct Libp2pBandwidthSink {
+	sink: Arc<transport::BandwidthSinks>,
+}
+
+impl BandwidthSink for Libp2pBandwidthSink {
+	fn total_inbound(&self) -> u64 {
+		self.sink.total_inbound()
+	}
+
+	fn total_outbound(&self) -> u64 {
+		self.sink.total_outbound()
+	}
+}
 
 /// Substrate network service. Handles network IO and manages connectivity.
 pub struct NetworkService<B: BlockT + 'static, H: ExHashT> {
@@ -126,7 +141,7 @@ pub struct NetworkService<B: BlockT + 'static, H: ExHashT> {
 	/// The `KeyPair` that defines the `PeerId` of the local node.
 	local_identity: Keypair,
 	/// Bandwidth logging system. Can be queried to know the average bandwidth consumed.
-	bandwidth: Arc<transport::BandwidthSinks>,
+	bandwidth: Arc<dyn BandwidthSink>,
 	/// Channel that sends messages to the actual worker.
 	to_worker: TracingUnboundedSender<ServiceToWorkerMsg>,
 	/// Protocol name -> `SetId` mapping for notification protocols. The map never changes after
@@ -175,8 +190,8 @@ where
 		PeerStore::new(bootnodes.into_iter().map(From::from).collect())
 	}
 
-	fn register_metrics(_registry: Option<&Registry>) -> Option<Metrics> {
-		None
+	fn register_notification_metrics(registry: Option<&Registry>) -> NotificationMetrics {
+		NotificationMetrics::new(registry)
 	}
 
 	fn bitswap_server(
@@ -194,7 +209,7 @@ where
 		max_notification_size: u64,
 		handshake: Option<NotificationHandshake>,
 		set_config: SetConfig,
-		_metrics: Option<Metrics>,
+		_metrics: NotificationMetrics,
 	) -> (Self::NotificationProtocolConfig, Box<dyn NotificationService>) {
 		NonDefaultSetConfig::new(
 			protocol_name,
@@ -570,7 +585,7 @@ where
 				.per_connection_event_buffer_size(24)
 				.max_negotiating_inbound_streams(2048);
 
-			(builder.build(), bandwidth)
+			(builder.build(), Arc::new(Libp2pBandwidthSink { sink: bandwidth }))
 		};
 
 		// Initialize the metrics.

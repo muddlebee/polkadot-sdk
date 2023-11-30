@@ -23,7 +23,7 @@ use crate::{
 	error::Error,
 	litep2p::shim::notification::peerset::{Peerset, PeersetNotificationCommand},
 	service::{
-		metrics::Metrics,
+		metrics::NotificationMetrics,
 		traits::{Direction, NotificationEvent as SubstrateNotificationEvent, ValidationResult},
 	},
 	MessageSink, NotificationService, ProtocolName,
@@ -48,43 +48,6 @@ mod tests;
 /// Logging target for the file.
 const LOG_TARGET: &str = "sub-libp2p::notification";
 
-/// Register opened substream to Prometheus.
-fn register_substream_opened(metrics: &Option<Metrics>, protocol: &ProtocolName) {
-	if let Some(metrics) = metrics {
-		metrics.notifications_streams_opened_total.with_label_values(&[&protocol]).inc();
-	}
-}
-
-/// Register closed substream to Prometheus.
-fn register_substream_closed(metrics: &Option<Metrics>, protocol: &ProtocolName) {
-	if let Some(metrics) = metrics {
-		metrics
-			.notifications_streams_closed_total
-			.with_label_values(&[&protocol[..]])
-			.inc();
-	}
-}
-
-/// Register sent notification to Prometheus.
-fn register_notification_sent(metrics: &Option<Metrics>, protocol: &ProtocolName, size: usize) {
-	if let Some(metrics) = metrics {
-		metrics
-			.notifications_sizes
-			.with_label_values(&["out", protocol])
-			.observe(size as f64);
-	}
-}
-
-/// Register received notification to Prometheus.
-fn register_notification_received(metrics: &Option<Metrics>, protocol: &ProtocolName, size: usize) {
-	if let Some(metrics) = metrics {
-		metrics
-			.notifications_sizes
-			.with_label_values(&["in", protocol])
-			.observe(size as f64);
-	}
-}
-
 /// Wrapper over `litep2p`'s notification sink.
 pub struct Litep2pMessageSink {
 	/// Protocol.
@@ -97,7 +60,7 @@ pub struct Litep2pMessageSink {
 	sink: NotificationSink,
 
 	/// Notification metrics.
-	metrics: Option<Metrics>,
+	metrics: NotificationMetrics,
 }
 
 impl Litep2pMessageSink {
@@ -106,7 +69,7 @@ impl Litep2pMessageSink {
 		peer: PeerId,
 		protocol: ProtocolName,
 		sink: NotificationSink,
-		metrics: Option<Metrics>,
+		metrics: NotificationMetrics,
 	) -> Self {
 		Self { protocol, peer, sink, metrics }
 	}
@@ -119,7 +82,7 @@ impl MessageSink for Litep2pMessageSink {
 		let size = notification.len();
 
 		match self.sink.send_sync_notification(notification) {
-			Ok(_) => register_notification_sent(&self.metrics, &self.protocol, size),
+			Ok(_) => self.metrics.register_notification_sent(&self.protocol, size),
 			Err(error) => log::trace!(
 				target: LOG_TARGET,
 				"{}: failed to send sync notification to {:?}: {error:?}",
@@ -138,7 +101,7 @@ impl MessageSink for Litep2pMessageSink {
 
 		match self.sink.send_async_notification(notification).await {
 			Ok(_) => {
-				register_notification_sent(&self.metrics, &self.protocol, size);
+				self.metrics.register_notification_sent(&self.protocol, size);
 				Ok(())
 			},
 			Err(error) => {
@@ -177,7 +140,7 @@ pub struct NotificationProtocol {
 	pending_cancels: HashSet<litep2p::PeerId>,
 
 	/// Notification metrics.
-	metrics: Option<Metrics>,
+	metrics: NotificationMetrics,
 }
 
 impl fmt::Debug for NotificationProtocol {
@@ -185,7 +148,6 @@ impl fmt::Debug for NotificationProtocol {
 		f.debug_struct("NotificationProtocol")
 			.field("protocol", &self.protocol)
 			.field("handle", &self.handle)
-			.field("peerset", &self.peerset)
 			.finish()
 	}
 }
@@ -196,7 +158,7 @@ impl NotificationProtocol {
 		protocol: ProtocolName,
 		handle: NotificationHandle,
 		peerset: Peerset,
-		metrics: Option<Metrics>,
+		metrics: NotificationMetrics,
 	) -> Self {
 		Self {
 			protocol,
@@ -253,7 +215,7 @@ impl NotificationService for NotificationProtocol {
 		let size = notification.len();
 
 		if let Ok(_) = self.handle.send_sync_notification(peer.into(), notification) {
-			register_notification_sent(&self.metrics, &self.protocol, size);
+			self.metrics.register_notification_sent(&self.protocol, size);
 		}
 	}
 
@@ -266,7 +228,7 @@ impl NotificationService for NotificationProtocol {
 
 		match self.handle.send_async_notification(peer.into(), notification).await {
 			Ok(_) => {
-				register_notification_sent(&self.metrics, &self.protocol, size);
+				self.metrics.register_notification_sent(&self.protocol, size);
 				Ok(())
 			},
 			Err(_) => Err(Error::ChannelClosed),
@@ -349,7 +311,7 @@ impl NotificationService for NotificationProtocol {
 						direction,
 						..
 					} => {
-						register_substream_opened(&self.metrics, &self.protocol);
+						self.metrics.register_substream_opened(&self.protocol);
 
 						if !self.peerset.report_substream_opened(peer.into(), direction.into()) {
 							if let Err(_) = tokio::time::timeout(
@@ -382,7 +344,7 @@ impl NotificationService for NotificationProtocol {
 					} => {
 						log::trace!(target: LOG_TARGET, "{}: substream closed for {peer:?}", self.protocol);
 
-						register_substream_closed(&self.metrics, &self.protocol);
+						self.metrics.register_substream_closed(&self.protocol);
 						self.peerset.report_substream_closed(peer.into());
 
 						if self.pending_cancels.remove(&peer) {
@@ -407,7 +369,7 @@ impl NotificationService for NotificationProtocol {
 						peer,
 						notification,
 					} => {
-						register_notification_received(&self.metrics, &self.protocol, notification.len());
+						self.metrics.register_notification_received(&self.protocol, notification.len());
 
 						return Some(SubstrateNotificationEvent::NotificationReceived {
 							peer: peer.into(),

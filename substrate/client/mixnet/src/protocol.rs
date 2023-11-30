@@ -20,7 +20,7 @@ use super::config::Config;
 use mixnet::core::PACKET_SIZE;
 use sc_network::{
 	config::{NonReservedPeerMode, SetConfig},
-	service::metrics::Metrics,
+	service::NotificationMetrics,
 	NetworkBackend, NotificationService, ProtocolName,
 };
 use sp_runtime::traits::Block as BlockT;
@@ -39,7 +39,7 @@ pub fn protocol_name(genesis_hash: &[u8], fork_id: Option<&str>) -> ProtocolName
 pub fn peers_set_config<Block: BlockT, Network: NetworkBackend<Block, <Block as BlockT>::Hash>>(
 	name: ProtocolName,
 	config: &Config,
-	metrics: Option<Metrics>,
+	metrics: NotificationMetrics,
 ) -> (Network::NotificationProtocolConfig, Box<dyn NotificationService>) {
 	let set_config = if config.substrate.num_gateway_slots != 0 {
 		// out_peers is always 0; we are only interested in connecting to mixnodes, which we do by

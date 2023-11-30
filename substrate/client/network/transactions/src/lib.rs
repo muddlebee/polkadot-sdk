@@ -37,8 +37,8 @@ use sc_network::{
 	config::{NonReservedPeerMode, ProtocolId, SetConfig},
 	error, multiaddr,
 	service::{
-		metrics::Metrics as NetworkMetrics,
 		traits::{NotificationEvent, NotificationService, ValidationResult},
+		NotificationMetrics,
 	},
 	types::ProtocolName,
 	utils::{interval, LruHashSet},
@@ -135,7 +135,7 @@ impl TransactionsHandlerPrototype {
 		protocol_id: ProtocolId,
 		genesis_hash: Hash,
 		fork_id: Option<&str>,
-		metrics: Option<NetworkMetrics>,
+		metrics: NotificationMetrics,
 	) -> (Self, Net::NotificationProtocolConfig) {
 		let genesis_hash = genesis_hash.as_ref();
 		let protocol_name: ProtocolName = if let Some(fork_id) = fork_id {

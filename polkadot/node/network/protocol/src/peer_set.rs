@@ -19,7 +19,7 @@
 use derive_more::Display;
 use polkadot_primitives::Hash;
 use sc_network::{
-	config::SetConfig, service::metrics::Metrics, types::ProtocolName, NetworkBackend,
+	config::SetConfig, service::NotificationMetrics, types::ProtocolName, NetworkBackend,
 	NotificationService,
 };
 use sp_runtime::traits::Block;
@@ -69,7 +69,7 @@ impl PeerSet {
 		self,
 		is_authority: IsAuthority,
 		peerset_protocol_names: &PeerSetProtocolNames,
-		metrics: Option<Metrics>,
+		metrics: NotificationMetrics,
 	) -> (N::NotificationProtocolConfig, (PeerSet, Box<dyn NotificationService>)) {
 		// Networking layer relies on `get_main_name()` being the main name of the protocol
 		// for peersets and connection management.
@@ -216,7 +216,7 @@ impl<T> IndexMut<PeerSet> for PerPeerSet<T> {
 pub fn peer_sets_info<B: Block, N: NetworkBackend<B, <B as Block>::Hash>>(
 	is_authority: IsAuthority,
 	peerset_protocol_names: &PeerSetProtocolNames,
-	metrics: Option<Metrics>,
+	metrics: NotificationMetrics,
 ) -> Vec<(N::NotificationProtocolConfig, (PeerSet, Box<dyn NotificationService>))> {
 	PeerSet::iter()
 		.map(|s| s.get_info::<B, N>(is_authority, &peerset_protocol_names, metrics.clone()))

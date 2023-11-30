@@ -26,7 +26,7 @@ use crate::{
 	event::Event,
 	network_state::NetworkState,
 	request_responses::{IfDisconnected, RequestFailure},
-	service::{metrics::Metrics, signature::Signature, PeerStoreProvider},
+	service::{metrics::NotificationMetrics, signature::Signature, PeerStoreProvider},
 	types::ProtocolName,
 	Multiaddr, ReputationChange,
 };
@@ -131,8 +131,8 @@ pub trait NetworkBackend<B: BlockT + 'static, H: ExHashT>: Send + 'static {
 	/// Create [`PeerStore`].
 	fn peer_store(bootnodes: Vec<sc_network_types::PeerId>) -> Self::PeerStore;
 
-	/// Register networking metrics that are used by the backend.
-	fn register_metrics(registry: Option<&Registry>) -> Option<Metrics>;
+	/// Register metrics that are used by the notification protocols.
+	fn register_notification_metrics(registry: Option<&Registry>) -> NotificationMetrics;
 
 	/// Create Bitswap server.
 	fn bitswap_server(
@@ -147,7 +147,7 @@ pub trait NetworkBackend<B: BlockT + 'static, H: ExHashT>: Send + 'static {
 		max_notification_size: u64,
 		handshake: Option<NotificationHandshake>,
 		set_config: SetConfig,
-		metrics: Option<Metrics>,
+		metrics: NotificationMetrics,
 	) -> (Self::NotificationProtocolConfig, Box<dyn NotificationService>);
 
 	/// Create request-response protocol configuration.
@@ -1000,4 +1000,13 @@ pub trait MessageSink: Send + Sync {
 	///
 	/// Returns an error if the peer does not exist.
 	async fn send_async_notification(&self, notification: Vec<u8>) -> Result<(), error::Error>;
+}
+
+/// Trait defining the behavior of a bandwidth sink.
+pub trait BandwidthSink: Send + Sync {
+	/// Get the number of bytes received.
+	fn total_inbound(&self) -> u64;
+
+	/// Get the number of bytes sent.
+	fn total_outbound(&self) -> u64;
 }

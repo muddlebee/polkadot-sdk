@@ -45,7 +45,7 @@ use crate::{
 	protocol,
 	service::{
 		ensure_addresses_consistent_with_transport,
-		metrics::{register_without_sources, Metrics},
+		metrics::{register_without_sources, MetricSources, NotificationMetrics},
 		out_events,
 		traits::{NetworkBackend, NetworkService},
 	},
@@ -475,6 +475,12 @@ impl<B: BlockT + 'static, H: ExHashT> NetworkBackend<B, H> for Litep2pNetworkBac
 			notif_protocols.insert(config.protocol_name, config.handle);
 		}
 
+		// Initialize the metrics.
+		let metrics = match &params.metrics_registry {
+			Some(registry) => Some(register_without_sources(registry)?),
+			None => None,
+		};
+
 		// initialize request-response protocols
 		//
 		// TODO: explanation
@@ -492,13 +498,14 @@ impl<B: BlockT + 'static, H: ExHashT> NetworkBackend<B, H> for Litep2pNetworkBac
 				.with_timeout(config.request_timeout)
 				.build();
 
+			// TODO: register metrics from registry and then pass to `RequestResponseProtocol`
 			config_builder = config_builder.with_request_response_protocol(protocol_config);
 			let (protocol, tx) = RequestResponseProtocol::new(
 				config.protocol_name.clone(),
 				handle,
 				peerstore_handle(),
 				config.inbound_queue.expect("inbound queue to exist"),
-				params.metrics.clone(),
+				metrics.clone(),
 			);
 			params.spawn_handle.run(Box::pin(async move {
 				protocol.run().await;
@@ -591,8 +598,8 @@ impl<B: BlockT + 'static, H: ExHashT> NetworkBackend<B, H> for Litep2pNetworkBac
 		Peerstore::new(bootnodes)
 	}
 
-	fn register_metrics(registry: Option<&Registry>) -> Option<Metrics> {
-		register_without_sources(registry)
+	fn register_notification_metrics(registry: Option<&Registry>) -> NotificationMetrics {
+		NotificationMetrics::new(registry)
 	}
 
 	/// Create Bitswap server.
@@ -609,7 +616,7 @@ impl<B: BlockT + 'static, H: ExHashT> NetworkBackend<B, H> for Litep2pNetworkBac
 		max_notification_size: u64,
 		handshake: Option<NotificationHandshake>,
 		set_config: SetConfig,
-		metrics: Option<Metrics>,
+		metrics: NotificationMetrics,
 	) -> (Self::NotificationProtocolConfig, Box<dyn NotificationService>) {
 		Self::NotificationProtocolConfig::new(
 			protocol_name,

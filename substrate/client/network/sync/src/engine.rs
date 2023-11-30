@@ -61,8 +61,8 @@ use sc_network::{
 	peer_store::PeerStoreProvider,
 	request_responses::{IfDisconnected, RequestFailure},
 	service::{
-		metrics::Metrics as NetworkMetrics,
 		traits::{Direction, NotificationConfig, NotificationEvent, ValidationResult},
+		NotificationMetrics,
 	},
 	types::ProtocolName,
 	utils::LruHashSet,
@@ -357,7 +357,7 @@ where
 		roles: Roles,
 		client: Arc<Client>,
 		metrics_registry: Option<&Registry>,
-		network_metrics: Option<NetworkMetrics>,
+		network_metrics: NotificationMetrics,
 		net_config: &FullNetworkConfiguration<B, <B as BlockT>::Hash, N>,
 		protocol_id: ProtocolId,
 		fork_id: &Option<String>,
@@ -1393,7 +1393,7 @@ where
 		best_hash: B::Hash,
 		genesis_hash: B::Hash,
 		set_config: &SetConfig,
-		metrics: Option<NetworkMetrics>,
+		metrics: NotificationMetrics,
 	) -> (N::NotificationProtocolConfig, Box<dyn NotificationService>) {
 		let block_announces_protocol = {
 			let genesis_hash = genesis_hash.as_ref();

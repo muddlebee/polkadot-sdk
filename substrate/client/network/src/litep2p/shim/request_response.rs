@@ -168,7 +168,7 @@ fn register_outbound_request_failure(
 	}
 }
 
-/// Register inbound request failure to Prometheus
+/// Register inbound request success to Prometheus
 fn register_outbound_request_success(
 	metrics: &Option<Metrics>,
 	protocol: &ProtocolName,
@@ -233,6 +233,7 @@ impl RequestResponseProtocol {
 				peerstore_handle,
 				pending_inbound_responses: HashMap::new(),
 				pending_outbound_responses: FuturesUnordered::new(),
+				metrics,
 			},
 			request_tx,
 		)
@@ -298,6 +299,7 @@ impl RequestResponseProtocol {
 				);
 
 				self.handle.reject_request(request_id);
+				register_inbound_request_failure(&self.metrics, &self.protocol, "");
 			},
 		}
 	}
@@ -324,6 +326,13 @@ impl RequestResponseProtocol {
 				);
 
 				let _ = tx.send(Ok(response));
+
+				// TODO: fix
+				register_outbound_request_success(
+					&self.metrics,
+					&self.protocol,
+					Duration::from_secs(1),
+				);
 			},
 		}
 	}
@@ -376,6 +385,8 @@ impl RequestResponseProtocol {
 		if let Some(error) = error {
 			let _ = tx.send(Err(error));
 		}
+
+		register_outbound_request_failure(&self.metrics, &self.protocol, "");
 	}
 
 	/// Handle outbound response.
@@ -388,7 +399,7 @@ impl RequestResponseProtocol {
 		let OutgoingResponse { result, reputation_changes, sent_feedback } = response;
 
 		for change in reputation_changes {
-			log::error!(target: LOG_TARGET, "{}: report {peer:?} {change:?}", self.protocol);
+			log::trace!(target: LOG_TARGET, "{}: report {peer:?}: {change:?}", self.protocol);
 			self.peerstore_handle.report_peer(peer.into(), change.value);
 		}
 
@@ -399,6 +410,8 @@ impl RequestResponseProtocol {
 					"{}: response rejected ({request_id:?}) for {peer:?}: {error:?}",
 					self.protocol,
 				);
+
+				register_inbound_request_failure(&self.metrics, &self.protocol, "");
 			},
 			Ok(response) => {
 				log::trace!(
@@ -413,6 +426,13 @@ impl RequestResponseProtocol {
 					Some(feedback) =>
 						self.handle.send_response_with_feedback(request_id, response, feedback),
 				}
+
+				// TODO: fix
+				register_inbound_request_success(
+					&self.metrics,
+					&self.protocol,
+					Duration::from_secs(1),
+				);
 			},
 		}
 	}
@@ -442,6 +462,7 @@ impl RequestResponseProtocol {
 						log::debug!(target: LOG_TARGET, "{}: reject request ({request_id:?}) from {peer:?}", self.protocol);
 
 						self.handle.reject_request(request_id);
+						register_inbound_request_failure(&self.metrics, &self.protocol, "");
 					}
 					Some((peer, request_id, Ok(response))) => self.on_outbound_response(peer, request_id, response),
 				},
