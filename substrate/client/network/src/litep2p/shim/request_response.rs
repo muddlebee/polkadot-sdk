@@ -22,7 +22,7 @@
 use crate::{
 	config::{IncomingRequest, OutgoingResponse},
 	litep2p::peerstore::PeerstoreHandle,
-	service::traits::RequestResponseConfig as RequestResponseConfigT,
+	service::{metrics::Metrics, traits::RequestResponseConfig as RequestResponseConfigT},
 	IfDisconnected, ProtocolName, RequestFailure,
 };
 
@@ -132,6 +132,56 @@ impl RequestResponseConfigT for RequestResponseConfig {
 	}
 }
 
+/// Register inbound request failure to Prometheus
+fn register_inbound_request_failure(
+	metrics: &Option<Metrics>,
+	protocol: &ProtocolName,
+	reason: &str,
+) {
+	if let Some(metrics) = metrics {
+		metrics.requests_in_failure_total.with_label_values(&[&protocol, reason]).inc();
+	}
+}
+
+/// Register inbound request success to Prometheus
+fn register_inbound_request_success(
+	metrics: &Option<Metrics>,
+	protocol: &ProtocolName,
+	serve_time: Duration,
+) {
+	if let Some(metrics) = metrics {
+		metrics
+			.requests_in_success_total
+			.with_label_values(&[&protocol])
+			.observe(serve_time.as_secs_f64());
+	}
+}
+
+/// Register inbound request failure to Prometheus
+fn register_outbound_request_failure(
+	metrics: &Option<Metrics>,
+	protocol: &ProtocolName,
+	reason: &str,
+) {
+	if let Some(metrics) = metrics {
+		metrics.requests_out_failure_total.with_label_values(&[&protocol, reason]).inc();
+	}
+}
+
+/// Register inbound request failure to Prometheus
+fn register_outbound_request_success(
+	metrics: &Option<Metrics>,
+	protocol: &ProtocolName,
+	duration: Duration,
+) {
+	if let Some(metrics) = metrics {
+		metrics
+			.requests_out_success_total
+			.with_label_values(&[&protocol])
+			.observe(duration.as_secs_f64());
+	}
+}
+
 /// Request-response protocol.
 ///
 /// TODO: explain in more detail
@@ -158,6 +208,9 @@ pub struct RequestResponseProtocol {
 
 	/// RX channel for receiving info for outbound requests.
 	request_rx: TracingUnboundedReceiver<OutboundRequest>,
+
+	/// Metrics, if enabled.
+	metrics: Option<Metrics>,
 }
 
 impl RequestResponseProtocol {
@@ -167,6 +220,7 @@ impl RequestResponseProtocol {
 		handle: RequestResponseHandle,
 		peerstore_handle: PeerstoreHandle,
 		inbound_queue: async_channel::Sender<IncomingRequest>,
+		metrics: Option<Metrics>,
 	) -> (Self, TracingUnboundedSender<OutboundRequest>) {
 		let (request_tx, request_rx) = tracing_unbounded("outbound-requests", 10_000);
 

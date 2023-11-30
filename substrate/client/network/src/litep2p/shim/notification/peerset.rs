@@ -575,6 +575,7 @@ impl Peerset {
 			self.protocol,
 		);
 
+		// TODO: move peer to separate "disconnected" map
 		*state = PeerState::Disconnected;
 		return ValidationResult::Reject
 	}
@@ -721,6 +722,7 @@ impl Stream for Peerset {
 		// check if any pending backoffs have expired
 		while let Poll::Ready(Some(peer)) = self.pending_backoffs.poll_next_unpin(cx) {
 			log::trace!(target: LOG_TARGET, "{}: backoff expired for {peer:?}", self.protocol);
+			// TODO: move peer to separate disconnected map
 			self.peers.insert(peer, PeerState::Disconnected);
 		}
 
@@ -1029,6 +1031,8 @@ impl Stream for Peerset {
 		//
 		// TODO(aaro): optimize this by keeping the set of reserved peers who are `Disconnected` to
 		// a separate may so they don't have to be iterated over during each call to `poll_next()`
+		// TODO(aaro): this has to be fixed before any conclusions from the benchmark data can be
+		// drawn
 		let reserved_peers = self
 			.peers
 			.iter()

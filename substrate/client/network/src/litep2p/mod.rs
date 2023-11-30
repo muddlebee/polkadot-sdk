@@ -498,6 +498,7 @@ impl<B: BlockT + 'static, H: ExHashT> NetworkBackend<B, H> for Litep2pNetworkBac
 				handle,
 				peerstore_handle(),
 				config.inbound_queue.expect("inbound queue to exist"),
+				params.metrics.clone(),
 			);
 			params.spawn_handle.run(Box::pin(async move {
 				protocol.run().await;
