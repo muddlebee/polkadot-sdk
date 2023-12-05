@@ -148,7 +148,7 @@ async fn send_request_to_disconnected_peer() {
 		})
 		.unwrap();
 
-	assert!(std::matches!(result_rx.await, Ok(Err(RequestFailure::Refused))));
+	assert!(std::matches!(result_rx.await, Ok(Err(RequestFailure::NotConnected))));
 }
 
 #[tokio::test]

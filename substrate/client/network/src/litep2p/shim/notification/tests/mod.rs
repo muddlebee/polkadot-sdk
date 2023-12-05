@@ -18,3 +18,5 @@
 
 #[cfg(test)]
 mod fuzz;
+#[cfg(test)]
+mod peerset;

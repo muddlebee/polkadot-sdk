@@ -16,16 +16,77 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-#[test]
-fn test() {
-	// TODO: get inbound substream from rserved peer which is inbound
-	// TODO: make that peer reserved and verify that the slot count is updated correctly when the
-	// substream is opened
-}
+use crate::{
+	litep2p::{
+		peerstore::{peerstore_handle_test, Peerstore},
+		shim::notification::peerset::{
+			Direction, PeerState, Peerset, PeersetCommand, PeersetNotificationCommand, Reserved,
+		},
+	},
+	peer_store::PeerStoreProvider,
+	protocol_controller::IncomingIndex,
+	service::traits::{PeerStore, ValidationResult},
+	ProtocolName, ReputationChange,
+};
 
-#[test]
-fn test2() {
-	// TODO: get inbound substream from rserved peer which is inbound
-	// TODO: make that peer reserved peer but keep it in the `Opening` state
-	// TODO: then remove the peer and verify the code doesn't crash
+use futures::prelude::*;
+use litep2p::protocol::notification::NotificationError;
+use rand::{
+	distributions::{Distribution, Uniform, WeightedIndex},
+	seq::IteratorRandom,
+};
+
+use sc_network_types::PeerId;
+use sc_utils::mpsc::tracing_unbounded;
+
+use std::{
+	collections::{HashMap, HashSet},
+	time::Instant,
+};
+
+// outbound substream was initiated for a peer but an inbound substream from that same peer
+// was receied while the `Peerset` was waiting for the outbound substream to be opened
+//
+// verify that the peer state is updated correctly
+#[tokio::test]
+async fn inbound_substream_for_outbound_peer() {
+	let peerstore_handle = peerstore_handle_test();
+	let peers = vec![PeerId::random(), PeerId::random(), PeerId::random()];
+	let inbound_peer = peers.iter().next().unwrap().clone();
+	let peerstore = Peerstore::from_handle(peerstore_handle.clone(), peers.clone());
+
+	let (mut peerset, to_peerset) = Peerset::new(
+		ProtocolName::from("/notif/1"),
+		25,
+		25,
+		false,
+		Default::default(),
+		Default::default(),
+		peerstore_handle,
+	);
+	assert_eq!(peerset.num_in(), 0usize);
+	assert_eq!(peerset.num_out(), 0usize);
+
+	match peerset.next().await {
+		Some(PeersetNotificationCommand::OpenSubstream { peers: out_peers }) => {
+			assert_eq!(peerset.num_in(), 0usize);
+			assert_eq!(peerset.num_out(), 3usize);
+			assert_eq!(
+				peerset.peers().get(&inbound_peer),
+				Some(&PeerState::Opening { direction: Direction::Outbound(Reserved::No) })
+			);
+		},
+		event => panic!("invalid event: {event:?}"),
+	}
+
+	// inbound substream was received from peer who was marked outbound
+	//
+	// verify that the peer state and inbound/outbound counts are updated correctly
+	assert_eq!(peerset.report_inbound_substream(inbound_peer), ValidationResult::Accept);
+	assert_eq!(peerset.num_in(), 1usize);
+	assert_eq!(peerset.num_out(), 2usize);
+	assert_eq!(
+		peerset.peers().get(&inbound_peer),
+		Some(&PeerState::Opening { direction: Direction::Inbound(Reserved::No) })
+	);
 }

@@ -313,15 +313,12 @@ impl NetworkPeers for Litep2pNetworkService {
 	}
 
 	fn report_peer(&self, peer: PeerId, cost_benefit: ReputationChange) {
-		// self.peer_store_handle.report_peer(peer, cost_benefit);
-		// log::warn!(target: "sub-libp2p::peerset", "report peer: {cost_benefit:?}");
 		let _ = self
 			.cmd_tx
 			.unbounded_send(NetworkServiceCommand::ReportPeer { peer, cost_benefit });
 	}
 
 	fn disconnect_peer(&self, peer: PeerId, protocol: ProtocolName) {
-		log::trace!(target: "sub-libp2p::peerset", "disconnect peer {peer:?} over {protocol:?}");
 		let _ = self
 			.cmd_tx
 			.unbounded_send(NetworkServiceCommand::DisconnectPeer { protocol, peer });
@@ -342,8 +339,6 @@ impl NetworkPeers for Litep2pNetworkService {
 	}
 
 	fn add_reserved_peer(&self, peer: MultiaddrWithPeerId) -> Result<(), String> {
-		log::trace!(target: LOG_TARGET, "add reserved peer {peer:?} for block announce protocol");
-
 		let _ = self.cmd_tx.unbounded_send(NetworkServiceCommand::AddPeersToReservedSet {
 			protocol: self.block_announce_protocol.clone(),
 			peers: HashSet::from_iter([peer.concat()]),
@@ -353,8 +348,6 @@ impl NetworkPeers for Litep2pNetworkService {
 	}
 
 	fn remove_reserved_peer(&self, peer: PeerId) {
-		log::trace!(target: LOG_TARGET, "remove reserved peer {peer:?} from block announce protocol");
-
 		let _ = self.cmd_tx.unbounded_send(NetworkServiceCommand::RemoveReservedPeers {
 			protocol: self.block_announce_protocol.clone(),
 			peers: HashSet::from_iter([peer]),
@@ -490,10 +483,8 @@ impl NetworkRequest for Litep2pNetworkService {
 	}
 }
 
-// NOTE: not implemented by `litep2p`
 impl NetworkNotification for Litep2pNetworkService {
 	fn write_notification(&self, _: PeerId, protocol: ProtocolName, _: Vec<u8>) {
-		// log::error!(target: LOG_TARGET, "write_notificatoin called for {protocol:?}");
 		unimplemented!();
 	}
 

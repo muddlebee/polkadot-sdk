@@ -18,8 +18,6 @@
 
 //! `NetworkBackend` implementation for `litep2p`.
 
-#![allow(unused)]
-
 use crate::{
 	config::{
 		FullNetworkConfiguration, IncomingRequest, NodeKeyConfig, NotificationHandshake, Params,
@@ -40,51 +38,43 @@ use crate::{
 			request_response::{RequestResponseConfig, RequestResponseProtocol},
 		},
 	},
-	multiaddr::Protocol,
+	multiaddr::{Multiaddr, Protocol},
 	peer_store::PeerStoreProvider,
 	protocol,
 	service::{
 		ensure_addresses_consistent_with_transport,
-		metrics::{register_without_sources, MetricSources, Metrics, NotificationMetrics},
+		metrics::{register_without_sources, Metrics, NotificationMetrics},
 		out_events,
 		traits::{NetworkBackend, NetworkService},
 	},
-	IfDisconnected, NetworkStatus, NotificationService, ProtocolName, RequestFailure,
+	NetworkStatus, NotificationService, ProtocolName,
 };
 
 use codec::Encode;
-use futures::{channel::oneshot, StreamExt};
-use libp2p::{kad::RecordKey, Multiaddr};
+use futures::StreamExt;
+use libp2p::kad::RecordKey;
 use litep2p::{
 	config::{Litep2pConfig, Litep2pConfigBuilder},
 	crypto::ed25519::{Keypair, SecretKey},
-	protocol::{
-		libp2p::{
-			bitswap::Config as BitswapConfig, identify::Config as IdentifyConfig,
-			kademlia::QueryId, ping::ConfigBuilder as PingConfigBuilder,
-		},
-		request_response::{DialOptions, RequestResponseHandle},
-	},
+	protocol::libp2p::{bitswap::Config as BitswapConfig, kademlia::QueryId},
 	transport::{
 		tcp::config::TransportConfig as TcpTransportConfig,
 		websocket::config::TransportConfig as WebSocketTransportConfig,
 	},
-	types::RequestId,
 	Litep2p, Litep2pEvent,
 };
 use parking_lot::Mutex;
 use prometheus_endpoint::Registry;
-use tokio_stream::StreamMap;
 
 use sc_client_api::BlockBackend;
 use sc_network_common::{role::Roles, ExHashT};
 use sc_network_types::PeerId;
-use sc_utils::mpsc::{tracing_unbounded, TracingUnboundedReceiver, TracingUnboundedSender};
+use sc_utils::mpsc::{tracing_unbounded, TracingUnboundedReceiver};
 use sp_runtime::traits::Block as BlockT;
 
 use std::{
 	cmp,
-	collections::{hash_map::Entry, HashMap, HashSet},
+	collections::{HashMap, HashSet},
 	fs,
 	future::Future,
 	io, iter,
@@ -102,7 +92,6 @@ mod service;
 mod shim;
 
 // TODO: metrics
-// TODO: bandwidth sink
 // TODO: add support for specifying external addresses
 
 /// Logging target for the file.
@@ -164,7 +153,7 @@ impl Litep2pNetworkBackend {
 		config: &FullNetworkConfiguration<B, H, Self>,
 		builder: Litep2pConfigBuilder,
 	) -> Litep2pConfigBuilder {
-		let config_mem = match config.network_config.transport {
+		let _ = match config.network_config.transport {
 			TransportConfig::MemoryOnly => panic!("memory transport not supported"),
 			TransportConfig::Normal { .. } => false,
 		};
@@ -207,7 +196,7 @@ impl Litep2pNetworkBackend {
 				.saturating_add(10)
 		};
 
-		let multiplexing_config = {
+		let yamux_config = {
 			let mut yamux_config = litep2p::yamux::Config::default();
 			// Enable proper flow-control: window updates are only sent when
 			// buffered data has been consumed.
@@ -221,7 +210,11 @@ impl Litep2pNetworkBackend {
 			yamux_config
 		};
 
-		log::error!(target: LOG_TARGET, "listen addresses: {:#?}", config.network_config.listen_addresses);
+		log::debug!(
+			target: LOG_TARGET,
+			"listen addresses: {:#?}",
+			config.network_config.listen_addresses,
+		);
 
 		let (tcp, websocket): (Vec<Option<_>>, Vec<Option<_>>) = config
 			.network_config
@@ -272,10 +265,12 @@ impl Litep2pNetworkBackend {
 					.into_iter()
 					.filter_map(|address| address)
 					.collect::<Vec<_>>(),
+				yamux_config: yamux_config.clone(),
 				..Default::default()
 			})
 			.with_tcp(TcpTransportConfig {
 				listen_addresses: tcp.into_iter().filter_map(|address| address).collect::<Vec<_>>(),
+				yamux_config,
 				..Default::default()
 			})
 	}
@@ -326,8 +321,6 @@ impl<B: BlockT + 'static, H: ExHashT> NetworkBackend<B, H> for Litep2pNetworkBac
 	type PeerStore = Peerstore;
 	type BitswapConfig = BitswapConfig;
 
-	/// Create new `NetworkBackend`.
-	// TODO(aaro): clean up this function
 	fn new(mut params: Params<B, H, Self>) -> Result<Self, Error>
 	where
 		Self: Sized,
@@ -369,12 +362,9 @@ impl<B: BlockT + 'static, H: ExHashT> NetworkBackend<B, H> for Litep2pNetworkBac
 			fs::create_dir_all(path)?;
 		}
 
-		log::info!(
-			target: LOG_TARGET,
-			"🏷  Local node identity is: {local_peer_id}",
-		);
+		log::info!(target: LOG_TARGET, "Local node identity is: {local_peer_id}");
 
-		let mut config_builder = Litep2pConfigBuilder::new();
+		let config_builder = Litep2pConfigBuilder::new();
 		let mut config_builder = Self::configure_transport(&params.network_config, config_builder);
 
 		let known_addresses = {
@@ -445,14 +435,14 @@ impl<B: BlockT + 'static, H: ExHashT> NetworkBackend<B, H> for Litep2pNetworkBac
 				.push(bootnode.multiaddr.clone());
 		}
 
-		let boot_node_ids = Arc::new(boot_node_ids);
-		let num_connected = Arc::new(AtomicUsize::new(0));
+		let _boot_node_ids = Arc::new(boot_node_ids);
+		let _num_connected = Arc::new(AtomicUsize::new(0));
 		// let external_addresses = Arc::new(Mutex::new(HashSet::new()));
 
 		let FullNetworkConfiguration {
 			notification_protocols,
 			request_response_protocols,
-			mut network_config,
+			network_config,
 		} = params.network_config;
 
 		// initialize notification protocols
@@ -485,8 +475,6 @@ impl<B: BlockT + 'static, H: ExHashT> NetworkBackend<B, H> for Litep2pNetworkBac
 		};
 
 		// initialize request-response protocols
-		//
-		// TODO: explanation
 		let mut request_response_tx = HashMap::new();
 
 		for config in request_response_protocols {
@@ -501,7 +489,6 @@ impl<B: BlockT + 'static, H: ExHashT> NetworkBackend<B, H> for Litep2pNetworkBac
 				.with_timeout(config.request_timeout)
 				.build();
 
-			// TODO: register metrics from registry and then pass to `RequestResponseProtocol`
 			config_builder = config_builder.with_request_response_protocol(protocol_config);
 			let (protocol, tx) = RequestResponseProtocol::new(
 				config.protocol_name.clone(),
@@ -516,32 +503,23 @@ impl<B: BlockT + 'static, H: ExHashT> NetworkBackend<B, H> for Litep2pNetworkBac
 			request_response_tx.insert(config.protocol_name, tx);
 		}
 
-		// TODO: clean up this code
-		let mut tmp: HashMap<litep2p::PeerId, Vec<Multiaddr>> = HashMap::new();
+		// collect known addresses
 		let peer_store_handle = params.peer_store.clone();
+		let known_addresses: HashMap<litep2p::PeerId, Vec<Multiaddr>> =
+			known_addresses.into_iter().fold(HashMap::new(), |mut acc, (peer, address)| {
+				let address = match address.iter().last() {
+					Some(Protocol::Ws(_) | Protocol::Wss(_) | Protocol::Tcp(_)) =>
+						address.with(Protocol::P2p(peer.into())),
+					Some(Protocol::P2p(_)) => address,
+					_ => return acc,
+				};
 
-		// add known addresses
-		for (peer, address) in known_addresses {
-			let last = address.iter().last();
+				acc.entry(peer.into()).or_default().push(address);
+				peer_store_handle.add_known_peer(peer);
 
-			if std::matches!(
-				last,
-				// Some(crate::multiaddr::Protocol::Ws(_) | crate::multiaddr::Protocol::Wss(_))
-				Some(crate::multiaddr::Protocol::Tcp(_))
-			) {
-				let new_address = address.with(crate::multiaddr::Protocol::P2p(peer.into()));
-				match tmp.get_mut(&peer.into()) {
-					Some(ref mut addrs) => {
-						addrs.push(new_address);
-					},
-					None => {
-						tmp.insert(peer.into(), vec![new_address]);
-						peer_store_handle.add_known_peer(peer);
-					},
-				}
-			}
-		}
-		config_builder = config_builder.with_known_addresses(tmp.clone().into_iter());
+				acc
+			});
+		config_builder = config_builder.with_known_addresses(known_addresses.clone().into_iter());
 
 		// enable ipfs ping, identify and kademlia, and potentially mdns if user enabled it
 		let (discovery, ping_config, identify_config, kademlia_config, maybe_mdns_config) =
@@ -550,7 +528,7 @@ impl<B: BlockT + 'static, H: ExHashT> NetworkBackend<B, H> for Litep2pNetworkBac
 				params.genesis_hash,
 				params.fork_id.as_deref(),
 				&params.protocol_id,
-				tmp,
+				known_addresses,
 				peerstore_handle(),
 			);
 
@@ -594,12 +572,10 @@ impl<B: BlockT + 'static, H: ExHashT> NetworkBackend<B, H> for Litep2pNetworkBac
 		})
 	}
 
-	/// Get handle to `NetworkService` of the `NetworkBackend`.
 	fn network_service(&self) -> Arc<dyn NetworkService> {
 		Arc::clone(&self.network_service)
 	}
 
-	/// Create `PeerStore`.
 	fn peer_store(bootnodes: Vec<PeerId>) -> Self::PeerStore {
 		Peerstore::new(bootnodes)
 	}
@@ -659,7 +635,7 @@ impl<B: BlockT + 'static, H: ExHashT> NetworkBackend<B, H> for Litep2pNetworkBac
 	/// async so `Litep2p` cannot be initialized using it. This needs to fixed but requires deeper
 	/// refactoring in `builder.rs` to allow calling asynchronous functions.
 	async fn run(mut self) {
-		let mut litep2p_backend = Litep2pBackend {
+		let litep2p_backend = Litep2pBackend {
 			network_service: self.network_service,
 			cmd_rx: self.cmd_rx,
 			metrics: self.metrics,
@@ -705,8 +681,6 @@ struct Litep2pBackend {
 	/// Discovery.
 	discovery: Discovery,
 
-	// /// Connected peers.
-	// peers: HashMap<litep2p::PeerId, Endpoint>,
 	/// Peerstore.
 	peerstore_handle: Arc<dyn PeerStoreProvider>,
 
@@ -799,7 +773,7 @@ impl Litep2pBackend {
 							self.event_streams.push(tx);
 						}
 						NetworkServiceCommand::Status { tx } => {
-							tx.send(NetworkStatus {
+							let _ = tx.send(NetworkStatus {
 								num_connected_peers: self
 									.peerset_handles
 									.get(&self.block_announce_protocol)
@@ -896,7 +870,7 @@ impl Litep2pBackend {
 								target: LOG_TARGET,
 								"`GET_VALUE` succeeded for a non-existent query",
 							),
-							Some(key) => {
+							Some(_key) => {
 								log::trace!(
 									target: LOG_TARGET,
 									"`GET_VALUE` for {:?} ({query_id:?}) succeeded",
@@ -968,7 +942,7 @@ impl Litep2pBackend {
 						// 	log::info!(target: LOG_TARGET, "observed address confirmed: {observed_address:?}");
 						// }
 					}
-					event => {
+					_event => {
 						// log::warn!(target: LOG_TARGET, "ignoring discovery event: {event:?}");
 					}
 				},
@@ -986,10 +960,7 @@ impl Litep2pBackend {
 							litep2p::Error::PeerIdMismatch(_, _) => "invalid-peer-id",
 							litep2p::Error::Timeout | litep2p::Error::TransportError(_) |
 							litep2p::Error::IoError(_) | litep2p::Error::WebSocket(_) => "transport-error",
-							error => {
-								log::error!(target: LOG_TARGET, "dial error: {error:?}");
-								"other"
-							}
+							error => "other",
 						};
 
 						if let Some(metrics) = &self.metrics {

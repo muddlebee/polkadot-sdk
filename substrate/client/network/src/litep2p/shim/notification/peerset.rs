@@ -81,8 +81,8 @@ const DISCONNECT_ADJUSTMENT: i32 = -256;
 const OPEN_FAILURE_ADJUSTMENT: i32 = -1024;
 
 /// Is the peer reserved?
-#[derive(Debug, Copy, Clone)]
-enum Reserved {
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum Reserved {
 	Yes,
 	No,
 }
@@ -102,8 +102,8 @@ impl From<Reserved> for bool {
 	}
 }
 
-#[derive(Debug, Copy, Clone)]
-enum Direction {
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum Direction {
 	/// Inbound substream.
 	Inbound(Reserved),
 
@@ -212,8 +212,8 @@ pub enum PeersetNotificationCommand {
 /// selected for an outbound substream as any other freshly added peer.
 // TODO(aaro): actually implement what is specified here
 // TODO(aaro): add lots of tests for different state transitions.
-#[derive(Debug)]
-enum PeerState {
+#[derive(Debug, PartialEq, Eq)]
+pub enum PeerState {
 	/// No active connection to peer.
 	Disconnected,
 
@@ -383,6 +383,21 @@ impl Peerset {
 		)
 	}
 
+	/// Get the number of inbound peers.
+	pub fn num_in(&self) -> usize {
+		self.num_in
+	}
+
+	/// Get the number of outbound peers.
+	pub fn num_out(&self) -> usize {
+		self.num_out
+	}
+
+	/// Get reference to known peers.
+	pub fn peers(&self) -> &HashMap<PeerId, PeerState> {
+		&self.peers
+	}
+
 	/// Report to [`Peerset`] that a substream was opened.
 	///
 	/// Slot for the stream was "preallocated" when the it was initiated (outbound) or accepted
@@ -458,12 +473,24 @@ impl Peerset {
 			// ([`PeerState::Closing`]) and it was a non-reserved peer
 			PeerState::Connected { direction: Direction::Inbound(Reserved::No) } |
 			PeerState::Closing { direction: Direction::Inbound(Reserved::No) } => {
+				log::trace!(
+					target: LOG_TARGET,
+					"{}: inbound substream closed to non-reserved peer {peer:?}: {state:?}",
+					self.protocol,
+				);
+
 				adjust_or_warn!(self.num_in, peer, self.protocol, Direction::Inbound(Reserved::No));
 			},
 			// close was initiated either by remote ([`PeerState::Connected`]) or local node
 			// ([`PeerState::Closing`]) and it was a non-reserved peer
 			PeerState::Connected { direction: Direction::Outbound(Reserved::No) } |
 			PeerState::Closing { direction: Direction::Outbound(Reserved::No) } => {
+				log::trace!(
+					target: LOG_TARGET,
+					"{}: outbound substream closed to non-reserved peer {peer:?} {state:?}",
+					self.protocol,
+				);
+
 				adjust_or_warn!(
 					self.num_out,
 					peer,
@@ -531,6 +558,8 @@ impl Peerset {
 
 				// since the peer was not a reserved peer when the outbound substream was opened and
 				// there are no free inbound slots, adjust outbound slot count and reject the peer
+				self.num_out -= 1;
+
 				if std::matches!(reserved, Reserved::No) && self.num_in >= self.max_in {
 					log::debug!(
 						target: LOG_TARGET,
@@ -538,7 +567,6 @@ impl Peerset {
 						self.protocol,
 					);
 
-					self.num_out -= 1;
 					*state = PeerState::Disconnected;
 					return ValidationResult::Reject
 				}
@@ -547,12 +575,14 @@ impl Peerset {
 				match direction {
 					Direction::Outbound(reserved) => match reserved {
 						Reserved::Yes => {},
-						Reserved::No => adjust_or_warn!(
-							self.num_out,
-							self.protocol,
-							peer,
-							Direction::Outbound(Reserved::No)
-						),
+						Reserved::No => {
+							adjust_or_warn!(
+								self.num_out,
+								self.protocol,
+								peer,
+								Direction::Outbound(Reserved::No)
+							);
+						},
 					},
 					direction => {
 						panic!(
@@ -560,7 +590,6 @@ impl Peerset {
 							self.protocol
 						);
 					},
-					_ => {},
 				}
 
 				*state = PeerState::Disconnected;

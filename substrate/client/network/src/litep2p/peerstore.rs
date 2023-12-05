@@ -166,12 +166,6 @@ impl PeerstoreHandle {
 			.expect("peer exist since it was just modified; qed")
 			.is_banned()
 		{
-			log::warn!(
-				target: LOG_TARGET,
-				"{peer:?} banned, disconnecting, reason: {}",
-				reputation_change.reason,
-			);
-
 			for sender in &lock.protocols {
 				sender.unbounded_send(PeersetCommand::DisconnectPeer { peer });
 			}
@@ -353,6 +347,15 @@ impl Peerstore {
 	pub fn new(bootnodes: Vec<PeerId>) -> Self {
 		let mut peerstore_handle = peerstore_handle();
 
+		for bootnode in bootnodes {
+			peerstore_handle.add_known_peer(bootnode);
+		}
+
+		Self { peerstore_handle }
+	}
+
+	/// Create new [`Peerstore`] from a [`PeerstoreHandle`].
+	pub fn from_handle(mut peerstore_handle: PeerstoreHandle, bootnodes: Vec<PeerId>) -> Self {
 		for bootnode in bootnodes {
 			peerstore_handle.add_known_peer(bootnode);
 		}
