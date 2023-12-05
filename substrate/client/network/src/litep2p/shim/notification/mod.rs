@@ -381,7 +381,10 @@ impl NotificationService for NotificationProtocol {
 					let (peer, result) = result?;
 					let validation_result = match result {
 						Ok(ValidationResult::Accept) => notification::ValidationResult::Accept,
-						_ => notification::ValidationResult::Reject
+						_ => {
+							self.peerset.report_substream_rejected(peer);
+							notification::ValidationResult::Reject
+						}
 					};
 
 					self.handle.send_validation_result(peer.into(), validation_result);

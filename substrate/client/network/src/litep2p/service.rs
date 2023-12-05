@@ -37,6 +37,7 @@ use codec::DecodeAll;
 use futures::{channel::oneshot, stream::BoxStream};
 use libp2p::{identity::SigningError, kad::record::Key as KademliaKey, Multiaddr};
 use litep2p::crypto::ed25519::Keypair;
+use parking_lot::RwLock;
 
 use sc_network_common::{
 	role::{ObservedRole, Roles},
@@ -171,6 +172,12 @@ pub struct Litep2pNetworkService {
 
 	/// Installed request-response protocols.
 	request_response_protocols: HashMap<ProtocolName, TracingUnboundedSender<OutboundRequest>>,
+
+	/// Listen addresses.
+	listen_addresses: Arc<RwLock<HashSet<Multiaddr>>>,
+
+	/// External addresses.
+	external_addresses: Arc<RwLock<HashSet<Multiaddr>>>,
 }
 
 impl Litep2pNetworkService {
@@ -183,6 +190,8 @@ impl Litep2pNetworkService {
 		peerset_handles: HashMap<ProtocolName, ProtocolControlHandle>,
 		block_announce_protocol: ProtocolName,
 		request_response_protocols: HashMap<ProtocolName, TracingUnboundedSender<OutboundRequest>>,
+		listen_addresses: Arc<RwLock<HashSet<Multiaddr>>>,
+		external_addresses: Arc<RwLock<HashSet<Multiaddr>>>,
 	) -> Self {
 		Self {
 			local_peer_id,
@@ -192,6 +201,8 @@ impl Litep2pNetworkService {
 			peerset_handles,
 			block_announce_protocol,
 			request_response_protocols,
+			listen_addresses,
+			external_addresses,
 		}
 	}
 }
@@ -248,11 +259,20 @@ impl NetworkStatusProvider for Litep2pNetworkService {
 	}
 
 	async fn network_state(&self) -> Result<NetworkState, ()> {
-		// TODO(aaro): implement
 		Ok(NetworkState {
 			peer_id: self.local_peer_id.to_base58(),
 			listened_addresses: HashSet::new(),
 			external_addresses: HashSet::new(),
+			// listened_addresses: self
+			// 	.listen_addresses
+			// 	.read()
+			// 	.iter(|address| address.clone())
+			// 	.collect(),
+			// external_addresses: self
+			// 	.external_addresses
+			// 	.read()
+			// 	.iter(|address| address.clone())
+			// 	.collect(),
 			connected_peers: HashMap::new(),
 			not_connected_peers: HashMap::new(),
 			// TODO: Check what info we can include here.
@@ -294,6 +314,7 @@ impl NetworkPeers for Litep2pNetworkService {
 
 	fn report_peer(&self, peer: PeerId, cost_benefit: ReputationChange) {
 		// self.peer_store_handle.report_peer(peer, cost_benefit);
+		// log::warn!(target: "sub-libp2p::peerset", "report peer: {cost_benefit:?}");
 		let _ = self
 			.cmd_tx
 			.unbounded_send(NetworkServiceCommand::ReportPeer { peer, cost_benefit });
@@ -420,13 +441,15 @@ impl NetworkEventStream for Litep2pNetworkService {
 
 impl NetworkStateInfo for Litep2pNetworkService {
 	fn external_addresses(&self) -> Vec<Multiaddr> {
-		// TODO: implement properly
 		vec![]
+		// todo!();
+		// self.external_addresses.read().iter(|address| address.clone()).collect()
 	}
 
 	fn listen_addresses(&self) -> Vec<Multiaddr> {
-		// TODO: implement properly
 		vec![]
+		// todo!();
+		// self.listen_addresses.read().iter(|address| address.clone()).collect()
 	}
 
 	fn local_peer_id(&self) -> PeerId {

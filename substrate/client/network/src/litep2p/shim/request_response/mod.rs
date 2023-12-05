@@ -48,7 +48,10 @@ use std::{
 	time::Duration,
 };
 
-// TODO: add lots of tests
+// TODO: move metrics out of here
+
+#[cfg(test)]
+mod tests;
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "sub-libp2p::request-response";
@@ -184,7 +187,12 @@ fn register_outbound_request_success(
 
 /// Request-response protocol.
 ///
-/// TODO: explain in more detail
+/// This is slightly different from the `RequestResponsesBehaviour` in that it is protocol-specific,
+/// meaning there is an instance of `RequestResponseProtocol` for each installed request-response
+/// protocol and that instance deals only with the requests and responses of that protocol, nothing
+/// else. It also differs from the other implementation by combining both inbound and outbound
+/// requests under one instance so all request-response-related behavior of any given protocol is
+/// handled through one instance of `RequestResponseProtocol`.
 pub struct RequestResponseProtocol {
 	/// Protocol name.
 	protocol: ProtocolName,
@@ -291,7 +299,7 @@ impl RequestResponseProtocol {
 					(peer, request_id, rx.await.map(|response| response).map_err(|_| ()))
 				}));
 			},
-			Err(_) => {
+			Err(error) => {
 				log::trace!(
 					target: LOG_TARGET,
 					"{:?}: dropping request from {peer:?} ({request_id:?}), inbound queue full",

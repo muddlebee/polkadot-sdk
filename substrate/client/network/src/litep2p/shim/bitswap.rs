@@ -16,7 +16,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Shim for litep2p's Bitswap implementation to make it work with `sc_network`.
+//! Shim for litep2p's Bitswap implementation to make it work with `sc-network`.
 
 use crate::service::traits;
 

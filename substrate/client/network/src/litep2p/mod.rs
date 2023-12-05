@@ -45,7 +45,7 @@ use crate::{
 	protocol,
 	service::{
 		ensure_addresses_consistent_with_transport,
-		metrics::{register_without_sources, MetricSources, NotificationMetrics},
+		metrics::{register_without_sources, MetricSources, Metrics, NotificationMetrics},
 		out_events,
 		traits::{NetworkBackend, NetworkService},
 	},
@@ -130,6 +130,9 @@ pub struct Litep2pNetworkBackend {
 
 	/// Discovery.
 	discovery: Discovery,
+
+	/// Prometheus metrics.
+	metrics: Option<Metrics>,
 
 	/// Peerstore.
 	peer_store_handle: Arc<dyn PeerStoreProvider>,
@@ -264,13 +267,13 @@ impl Litep2pNetworkBackend {
 			.unzip();
 
 		builder
-			// .with_websocket(WebSocketTransportConfig {
-			// 	listen_addresses: websocket
-			// 		.into_iter()
-			// 		.filter_map(|address| address)
-			// 		.collect::<Vec<_>>(),
-			// 	..Default::default()
-			// })
+			.with_websocket(WebSocketTransportConfig {
+				listen_addresses: websocket
+					.into_iter()
+					.filter_map(|address| address)
+					.collect::<Vec<_>>(),
+				..Default::default()
+			})
 			.with_tcp(TcpTransportConfig {
 				listen_addresses: tcp.into_iter().filter_map(|address| address).collect::<Vec<_>>(),
 				..Default::default()
@@ -574,6 +577,8 @@ impl<B: BlockT + 'static, H: ExHashT> NetworkBackend<B, H> for Litep2pNetworkBac
 			notif_protocols.clone(),
 			block_announce_protocol.clone(),
 			request_response_tx,
+			Default::default(),
+			Default::default(),
 		));
 
 		Ok(Self {
@@ -584,6 +589,7 @@ impl<B: BlockT + 'static, H: ExHashT> NetworkBackend<B, H> for Litep2pNetworkBac
 			config: config_builder.build(),
 			notif_protocols,
 			discovery,
+			metrics,
 			block_announce_protocol: block_announce_protocol.clone(),
 		})
 	}
@@ -656,6 +662,7 @@ impl<B: BlockT + 'static, H: ExHashT> NetworkBackend<B, H> for Litep2pNetworkBac
 		let mut litep2p_backend = Litep2pBackend {
 			network_service: self.network_service,
 			cmd_rx: self.cmd_rx,
+			metrics: self.metrics,
 			// peers: HashMap::new(),
 			listen_addresses: self.listen_addresses,
 			peerset_handles: self.notif_protocols,
@@ -708,6 +715,9 @@ struct Litep2pBackend {
 
 	/// Sender for DHT events.
 	event_streams: out_events::OutChannels,
+
+	/// Prometheus metrics.
+	metrics: Option<Metrics>,
 }
 
 impl Litep2pBackend {
@@ -970,6 +980,21 @@ impl Litep2pBackend {
 					Some(Litep2pEvent::ConnectionClosed { peer }) => {
 						// let _is_some = self.peers.remove(&peer);
 						// debug_assert!(_is_some.is_some());
+					}
+					Some(Litep2pEvent::DialFailure { address, error }) => {
+						let reason = match error {
+							litep2p::Error::PeerIdMismatch(_, _) => "invalid-peer-id",
+							litep2p::Error::Timeout | litep2p::Error::TransportError(_) |
+							litep2p::Error::IoError(_) | litep2p::Error::WebSocket(_) => "transport-error",
+							error => {
+								log::error!(target: LOG_TARGET, "dial error: {error:?}");
+								"other"
+							}
+						};
+
+						if let Some(metrics) = &self.metrics {
+							metrics.pending_connections_errors_total.with_label_values(&[reason]).inc();
+						}
 					}
 					_ => {}
 				},

@@ -39,20 +39,21 @@ use crate::{
 
 use futures::{channel::oneshot, future::BoxFuture, stream::FuturesUnordered, Stream, StreamExt};
 use futures_timer::Delay;
-
 use litep2p::protocol::notification::NotificationError;
+
 use sc_network_types::PeerId;
 use sc_utils::mpsc::{tracing_unbounded, TracingUnboundedReceiver, TracingUnboundedSender};
 
 use std::{
 	collections::{hash_map::Entry, HashMap, HashSet},
+	future::Future,
 	pin::Pin,
 	sync::{
 		atomic::{AtomicUsize, Ordering},
 		Arc,
 	},
-	task::{Context, Poll, Waker},
-	time::Duration,
+	task::{Context, Poll},
+	time::{Duration, Instant},
 };
 
 // TODO: should reserved set updates be atomic?
@@ -62,7 +63,12 @@ use std::{
 const LOG_TARGET: &str = "sub-libp2p::peerset";
 
 /// Default backoff for connection re-attempts.
-const DEFAULT_BACKOFF: Duration = Duration::from_secs(30);
+const DEFAULT_BACKOFF: Duration = Duration::from_secs(15);
+
+/// Slot allocation frequency.
+///
+/// How often should [`Peerset`] attempt to establish outbound connections.
+const SLOT_ALLOCATION_FREQUENCY: Duration = Duration::from_secs(1);
 
 /// Reputation adjustment when a peer gets disconnected.
 ///
@@ -72,7 +78,7 @@ const DISCONNECT_ADJUSTMENT: i32 = -256;
 /// Reputation adjustment when a substream fails to open.
 ///
 /// Lessens the likelyhood of the peer getting selected for an outbound connection soon.
-const OPEN_FAILURE_ADJUSTMENT: i32 = -256;
+const OPEN_FAILURE_ADJUSTMENT: i32 = -1024;
 
 /// Is the peer reserved?
 #[derive(Debug, Copy, Clone)]
@@ -308,7 +314,10 @@ pub struct Peerset {
 	/// Pending backoffs for peers who recently disconnected.
 	pending_backoffs: FuturesUnordered<BoxFuture<'static, PeerId>>,
 
-	waker: Option<Waker>,
+	/// Next time when [`Peerset`] should perform slot allocation.
+	next_slot_allocation: Delay,
+
+	opening: HashMap<PeerId, Instant>,
 
 	iteration: usize,
 }
@@ -325,6 +334,7 @@ macro_rules! adjust_or_warn {
 					"{}: state mismatch, {:?} is not counted as part of {:?} slots",
 					$protocol, $peer, $direction
 				);
+				debug_assert!(false);
 			}
 		}
     }};
@@ -364,9 +374,10 @@ impl Peerset {
 				reserved_only,
 				peers,
 				connected_peers,
-				waker: None,
 				pending_backoffs: FuturesUnordered::new(),
 				iteration: 0usize,
+				next_slot_allocation: Delay::new(SLOT_ALLOCATION_FREQUENCY),
+				opening: HashMap::new(),
 			},
 			cmd_tx,
 		)
@@ -392,6 +403,11 @@ impl Peerset {
 			debug_assert!(false);
 			return false
 		};
+
+		let elapsed = self.opening.remove(&peer);
+		if self.protocol.contains("block") {
+			log::error!(target: LOG_TARGET, "opening substream took {}", elapsed.unwrap().elapsed().as_secs());
+		}
 
 		// litep2p doesn't support the ability to cancel an opening substream to
 		match state {
@@ -435,6 +451,8 @@ impl Peerset {
 			return
 		};
 
+		self.opening.remove(&peer).is_none();
+
 		match &state {
 			// close was initiated either by remote ([`PeerState::Connected`]) or local node
 			// ([`PeerState::Closing`]) and it was a non-reserved peer
@@ -470,7 +488,6 @@ impl Peerset {
 			Delay::new(DEFAULT_BACKOFF).await;
 			peer
 		}));
-		self.waker.take().map(|waker| waker.wake());
 	}
 
 	/// Report to [`Peerset`] that an inbound substream was opened and that it should validate it.
@@ -485,6 +502,10 @@ impl Peerset {
 			PeerState::Disconnected => {},
 			// backed-off peers are ignored (TODO: should they be ignored?)
 			PeerState::Backoff => {
+				// if self.protocol.contains("block") {
+				// 	panic!("do not reject here if it's possible to accept the peer");
+				// }
+
 				log::trace!(target: LOG_TARGET, "{}: ({peer:?}) is backed-off, reject inbound substream", self.protocol);
 				return ValidationResult::Reject
 			},
@@ -558,6 +579,7 @@ impl Peerset {
 
 		if reserved_peer {
 			*state = PeerState::Opening { direction: Direction::Inbound(reserved_peer.into()) };
+			self.opening.insert(peer, Instant::now());
 			return ValidationResult::Accept
 		}
 
@@ -566,6 +588,7 @@ impl Peerset {
 			debug_assert!(self.num_in <= self.max_in);
 
 			*state = PeerState::Opening { direction: Direction::Inbound(reserved_peer.into()) };
+			self.opening.insert(peer, Instant::now());
 			return ValidationResult::Accept
 		}
 
@@ -587,6 +610,8 @@ impl Peerset {
 			"{}: failed to open substream to {peer:?}: {error:?}",
 			self.protocol,
 		);
+
+		assert!(self.opening.remove(&peer).is_some());
 
 		match self.peers.get(&peer) {
 			Some(PeerState::Opening { direction: Direction::Outbound(Reserved::No) }) => {
@@ -642,7 +667,55 @@ impl Peerset {
 			Delay::new(DEFAULT_BACKOFF).await;
 			peer
 		}));
-		self.waker.take().map(|waker| waker.wake());
+	}
+
+	/// [`Peerset`] had accepted a peer but it was then rejected by the protocol.
+	pub fn report_substream_rejected(&mut self, peer: PeerId) {
+		log::trace!(target: LOG_TARGET, "{}: {peer:?} rejected by the protocol", self.protocol);
+
+		self.opening.remove(&peer);
+
+		match self.peers.remove(&peer) {
+			Some(PeerState::Opening { direction }) => match direction {
+				Direction::Inbound(Reserved::Yes) | Direction::Outbound(Reserved::Yes) => {
+					log::warn!(
+						target: LOG_TARGET,
+						"{}: reserved peer {peer:?} rejected by the protocol",
+						self.protocol,
+					);
+					self.peers.insert(peer, PeerState::Disconnected);
+				},
+				Direction::Inbound(Reserved::No) => {
+					adjust_or_warn!(
+						self.num_in,
+						peer,
+						self.protocol,
+						Direction::Inbound(Reserved::No)
+					);
+					self.peers.insert(peer, PeerState::Disconnected);
+				},
+				Direction::Outbound(Reserved::No) => {
+					adjust_or_warn!(
+						self.num_out,
+						peer,
+						self.protocol,
+						Direction::Outbound(Reserved::No)
+					);
+					self.peers.insert(peer, PeerState::Disconnected);
+				},
+			},
+			None => {},
+			Some(state) => {
+				log::warn!(
+					target: LOG_TARGET,
+					"{}: {peer:?} rejected by the protocol but in invalid state: {state:?}",
+					self.protocol,
+				);
+				debug_assert!(false);
+
+				self.peers.insert(peer, state);
+			},
+		}
 	}
 }
 
@@ -650,74 +723,94 @@ impl Stream for Peerset {
 	type Item = PeersetNotificationCommand;
 
 	fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-		self.waker = Some(cx.waker().clone());
+		self.iteration += 1;
 
-		// self.iteration += 1;
-		// if (self.iteration % 500) == 0 {
-		// 	let connected_reserved = self.peers.iter().fold(0usize, |acc, (peer, state)| {
-		// 		if self.reserved_peers.contains(peer) &&
-		// 			std::matches!(state, PeerState::Connected { .. })
-		// 		{
-		// 			acc + 1
-		// 		} else {
-		// 			acc
-		// 		}
-		// 	});
-		// 	let open = self.peers.iter().fold(0usize, |acc, (peer, state)| {
-		// 		if std::matches!(state, PeerState::Opening { .. }) {
-		// 			acc + 1
-		// 		} else {
-		// 			acc
-		// 		}
-		// 	});
-		// 	let cancel = self.peers.iter().fold(0usize, |acc, (peer, state)| {
-		// 		if std::matches!(state, PeerState::Canceled { .. }) {
-		// 			log::debug!(target: LOG_TARGET, "{}: {peer:?} is canceled", self.protocol);
-		// 			acc + 1
-		// 		} else {
-		// 			acc
-		// 		}
-		// 	});
-		// 	let close = self.peers.iter().fold(0usize, |acc, (peer, state)| {
-		// 		if std::matches!(state, PeerState::Closing { .. }) {
-		// 			log::trace!("{}: peer that's getting closed {peer:?}", self.protocol);
-		// 			acc + 1
-		// 		} else {
-		// 			acc
-		// 		}
-		// 	});
+		if self.protocol.contains("bloc") {
+			for (peer, opened) in &self.opening {
+				if opened.elapsed().as_secs() > 30 {
+					log::error!(
+						target: LOG_TARGET,
+						"{}: substream for has been opening for {peer:?} more than 30 seconds",
+						self.protocol
+					);
+					panic!(
+						"{}: substream for has been opening for {peer:?} more than 30 seconds",
+						self.protocol
+					);
+				}
+			}
+		}
 
-		// 	let total_peers = self.num_in + self.num_out;
-		// 	let total = self.peers.iter().fold(0usize, |acc, (peer, state)| {
-		// 		if std::matches!(
-		// 			state,
-		// 			PeerState::Closing { .. } |
-		// 				PeerState::Canceled { .. } |
-		// 				PeerState::Opening { .. } |
-		// 				PeerState::Connected { .. }
-		// 		) {
-		// 			acc + 1
-		// 		} else {
-		// 			acc
-		// 		}
-		// 	});
+		// TODO: the peer count is really unstable even with 10 peers even though the node is
+		// able // to establish connections to nearly 300 peers when the node is run with
+		// `--out-peers 300`. // This could potentially be explained by outbound peer selection
+		// being fault and choosing // the same peers over and over again
 
-		// 	if total_peers != 0 && total_peers != total {
-		// 		panic!("{}: state mismatch {total} vs {total_peers}", self.protocol);
-		// 	}
+		if (self.iteration % 50) == 0 && self.protocol.contains("block") {
+			let connected_reserved = self.peers.iter().fold(0usize, |acc, (peer, state)| {
+				if self.reserved_peers.contains(peer) &&
+					std::matches!(state, PeerState::Connected { .. })
+				{
+					acc + 1
+				} else {
+					acc
+				}
+			});
+			let open = self.peers.iter().fold(0usize, |acc, (peer, state)| {
+				if std::matches!(state, PeerState::Opening { .. }) {
+					acc + 1
+				} else {
+					acc
+				}
+			});
+			let cancel = self.peers.iter().fold(0usize, |acc, (peer, state)| {
+				if std::matches!(state, PeerState::Canceled { .. }) {
+					// log::debug!(target: LOG_TARGET, "{}: {peer:?} is canceled", self.protocol);
+					acc + 1
+				} else {
+					acc
+				}
+			});
+			let close = self.peers.iter().fold(0usize, |acc, (peer, state)| {
+				if std::matches!(state, PeerState::Closing { .. }) {
+					// log::trace!("{}: peer that's getting closed {peer:?}", self.protocol);
+					acc + 1
+				} else {
+					acc
+				}
+			});
 
-		// 	log::info!(
-		// 		target: LOG_TARGET,
-		// 		"{}: num_in/max_in {}/{}, num_in/max_in {}/{}, connected reserved peers {}, open {}
-		// cancel {} close {}", 		self.protocol,
-		// 		self.num_in,
-		// 		self.max_in,
-		// 		self.num_out,
-		// 		self.max_out,
-		// 		connected_reserved,
-		// 		open,cancel,close,
-		// 	)
-		// }
+			let total_peers = self.num_in + self.num_out;
+			let total = self.peers.iter().fold(0usize, |acc, (peer, state)| {
+				if std::matches!(
+					state,
+					PeerState::Closing { .. } |
+						PeerState::Canceled { .. } |
+						PeerState::Opening { .. } |
+						PeerState::Connected { .. }
+				) {
+					acc + 1
+				} else {
+					acc
+				}
+			});
+
+			if total_peers != 0 && total_peers != total {
+				panic!("{}: state mismatch {total} vs {total_peers}", self.protocol);
+			}
+
+			log::error!(
+				target: LOG_TARGET,
+				"num_in/max_in {}/{}, num_out/max_out {}/{}, open {} cancel {} close {}",
+				// self.protocol,
+				self.num_in,
+				self.max_in,
+				self.num_out,
+				self.max_out,
+				// connected_reserved,
+				open,cancel,close,
+			)
+		}
 
 		// check if any pending backoffs have expired
 		while let Poll::Ready(Some(peer)) = self.pending_backoffs.poll_next_unpin(cx) {
@@ -751,6 +844,11 @@ impl Stream for Peerset {
 
 						self.peers.insert(peer, PeerState::Backoff);
 					},
+					// substream might have been opening but not yet fully open when the protocol
+					// or `Peerstore` request the connection to be closed
+					//
+					// if the substream opens successfully, close it immediately and mark the peer
+					// as `Disconnected`
 					Some(PeerState::Opening { direction }) => {
 						self.peers.insert(peer, PeerState::Canceled { direction });
 					},
@@ -811,7 +909,6 @@ impl Stream for Peerset {
 					log::debug!(target: LOG_TARGET, "{}: set reserved peers {peers:?}", self.protocol);
 
 					if !peers.is_empty() {
-						// collect reserved peers which are not in new reserved set
 						let peers_to_disconnect = self
 							.reserved_peers
 							.iter()
@@ -820,7 +917,6 @@ impl Stream for Peerset {
 
 						// set `reserved_peers` to the new set and issue wake-up for the future so
 						// `Peerset` will open substreams for the new reserved peers
-						cx.waker().wake_by_ref();
 						self.reserved_peers = peers;
 
 						if !peers_to_disconnect.is_empty() {
@@ -851,6 +947,7 @@ impl Stream for Peerset {
 									None | Some(PeerState::Disconnected)
 								)
 								.then(|| {
+									self.opening.insert(*peer, Instant::now());
 									self.peers.insert(
 										*peer,
 										PeerState::Opening {
@@ -1027,130 +1124,90 @@ impl Stream for Peerset {
 			}
 		}
 
-		// try to establish connection any reserved peer who is not currently connected
+		// periodically check if `Peerset` is currently not connected to some reserved peers
+		// it should be connected to
 		//
-		// TODO(aaro): optimize this by keeping the set of reserved peers who are `Disconnected` to
-		// a separate may so they don't have to be iterated over during each call to `poll_next()`
-		// TODO(aaro): this has to be fixed before any conclusions from the benchmark data can be
-		// drawn
-		let reserved_peers = self
-			.peers
-			.iter()
-			.filter_map(|(peer, state)| {
-				(self.reserved_peers.contains(peer) &&
-					std::matches!(state, PeerState::Disconnected))
-				.then_some(*peer)
-			})
-			.collect::<Vec<_>>();
+		// also check if there are free outbound slots and if so, fetch peers with highest
+		// reputations from `Peerstore` and start opening substreams to these peers
+		if let Poll::Ready(()) = Pin::new(&mut self.next_slot_allocation).poll(cx) {
+			// TODO(aaro): iterate over the peers only once
+			let mut connect_to = self
+				.peers
+				.iter()
+				.filter_map(|(peer, state)| {
+					(self.reserved_peers.contains(peer) &&
+						std::matches!(state, PeerState::Disconnected) &&
+						!self.peerstore_handle.is_peer_banned(peer))
+					.then_some(*peer)
+				})
+				.collect::<Vec<_>>();
 
-		if !reserved_peers.is_empty() {
-			log::trace!(
-				target: LOG_TARGET,
-				"{}: start connecting to reserved peers {reserved_peers:?}",
-				self.protocol,
-			);
-
-			reserved_peers.iter().for_each(|peer| {
+			connect_to.iter().for_each(|peer| {
+				self.opening.insert(*peer, Instant::now());
 				self.peers.insert(
 					*peer,
 					PeerState::Opening { direction: Direction::Outbound(Reserved::Yes) },
 				);
 			});
 
-			return Poll::Ready(Some(PeersetNotificationCommand::OpenSubstream {
-				peers: reserved_peers,
-			}))
-		}
+			// if the number of outbound peers is lower than the desired amount of oubound peers,
+			// query `PeerStore` and try to get a new outbound candidated.
+			if self.num_out < self.max_out && !self.reserved_only {
+				// TODO(aaro): continuously update the ignore list so it doesn't have to be
+				// recollected every time
+				let ignore: HashSet<&PeerId> = self
+					.peers
+					.iter()
+					.filter_map(|(peer, state)| {
+						std::matches!(
+							state,
+							PeerState::Closing { .. } |
+								PeerState::Backoff | PeerState::Opening { .. } |
+								PeerState::Connected { .. } | PeerState::Canceled { .. },
+						)
+						.then_some(peer)
+					})
+					.collect();
 
-		// if the number of outbound peers is lower than the desired amount of oubound peers,
-		// query `PeerStore` and try to get a new outbound candidated.
-		if self.num_out < self.max_out && !self.reserved_only {
-			// TODO(aaro): continuously update the ignore list so it doesn't have to be recollected
-			// every time
-			let ignore: HashSet<&PeerId> = self
-				.peers
-				.iter()
-				.filter_map(|(peer, state)| {
-					std::matches!(
-						state,
-						PeerState::Closing { .. } |
-							PeerState::Backoff | PeerState::Opening { .. } |
-							PeerState::Connected { .. } | PeerState::Canceled { .. },
-					)
-					.then_some(peer)
-				})
-				.collect();
+				let peers: Vec<_> = self
+					.peerstore_handle
+					.next_outbound_peers(&ignore, self.max_out - self.num_out)
+					.collect();
 
-			let peers: Vec<_> = self
-				.peerstore_handle
-				.next_outbound_peers(&ignore, self.max_out - self.num_out)
-				.collect();
+				use crate::peer_store::PeerStoreProvider;
+				let reputations: Vec<_> = peers
+					.iter()
+					.map(|peer| (*peer, self.peerstore_handle.peer_reputation(peer)))
+					.collect();
 
-			if peers.len() > 0 {
-				log::trace!(target: LOG_TARGET, "{}: start connecting to peers {peers:?}", self.protocol);
+				if peers.len() > 0 {
+					peers.iter().for_each(|peer| {
+						self.opening.insert(*peer, Instant::now());
+						self.peers.insert(
+							*peer,
+							PeerState::Opening { direction: Direction::Outbound(Reserved::No) },
+						);
+					});
 
-				peers.iter().for_each(|peer| {
-					self.peers.insert(
-						*peer,
-						PeerState::Opening { direction: Direction::Outbound(Reserved::No) },
-					);
-				});
-				self.num_out += peers.len();
+					self.num_out += peers.len();
+					connect_to.extend(peers);
+				}
+			}
 
-				return Poll::Ready(Some(PeersetNotificationCommand::OpenSubstream { peers }))
+			// start timer for the next allocation and if there were peers which the `Peerset`
+			// wasn't connected but should be, send command to litep2p to start opening substreams.
+			self.next_slot_allocation = Delay::new(SLOT_ALLOCATION_FREQUENCY);
+
+			if !connect_to.is_empty() {
+				log::trace!(target: LOG_TARGET, "{}: total known peers: {:?}", self.protocol, self.peerstore_handle.peer_count());
+				log::trace!(target: LOG_TARGET, "{}: start connecting to peers {connect_to:?}", self.protocol);
+
+				return Poll::Ready(Some(PeersetNotificationCommand::OpenSubstream {
+					peers: connect_to,
+				}))
 			}
 		}
 
 		Poll::Pending
 	}
-}
-
-#[cfg(test)]
-mod tests {
-	use super::*;
-	use crate::litep2p::peerstore::peerstore_handle;
-
-	// #[tokio::test]
-	// async fn test() {
-	// 	let mut peerstore_handle = peerstore_handle();
-	// 	let (mut peerset, mut tx) = Peerset::new(
-	// 		ProtocolName::from("/notif/1"),
-	// 		8usize,
-	// 		32usize,
-	// 		false,
-	// 		HashSet::new(),
-	// 		Default::default(),
-	// 		peerstore_handle.clone(),
-	// 	);
-
-	// 	peerset.report_substream_opened(PeerId::random(), traits::Direction::Inbound);
-	// }
-
-	// #[tokio::test]
-	// async fn set_reserved_peers() {
-	// 	let reserved_peer1 = PeerId::random();
-	// 	let reserved_peer2 = PeerId::random();
-	// 	let reserved_peer3 = PeerId::random();
-	// 	let mut peerstore_handle = peerstore_handle();
-
-	// 	let (mut peerset, mut tx) = Peerset::new(
-	// 		ProtocolName::from("/notif/1"),
-	// 		8usize,
-	// 		32usize,
-	// 		false,
-	// 		HashSet::from_iter([reserved_peer1, reserved_peer2, reserved_peer3]),
-	// 		Default::default(),
-	// 		peerstore_handle.clone(),
-	// 	);
-
-	// 	match peerset.next().await {
-	// 		state => panic!("didn't expect {state:?}"),
-	// 		Some(PeersetNotificationCommand::OpenSubstream { peers }) => {
-	// 			todo!();
-	// 		},
-	// 	}
-	// }
-
-	#[tokio::test]
-	async fn set_reserved_only() {}
 }

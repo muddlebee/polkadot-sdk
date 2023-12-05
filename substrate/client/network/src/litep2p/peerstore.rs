@@ -29,6 +29,7 @@ use crate::{
 
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
+use rand::{seq::SliceRandom, thread_rng};
 use wasm_timer::Delay;
 
 use sc_network_types::PeerId;
@@ -140,7 +141,42 @@ impl PeerstoreHandle {
 	}
 
 	/// Adjust peer reputation.
-	pub fn report_peer(&mut self, peer: PeerId, reputation_change: i32) {}
+	pub fn report_peer(&mut self, peer: PeerId, reputation_change: i32) {
+		let mut lock = self.0.lock();
+
+		match lock.peers.get_mut(&peer) {
+			Some(info) => {
+				info.reputation = info.reputation.saturating_add(reputation_change);
+			},
+			None => {
+				lock.peers.insert(
+					peer,
+					PeerInfo {
+						reputation: reputation_change,
+						last_updated: Instant::now(),
+						role: None,
+					},
+				);
+			},
+		}
+
+		if lock
+			.peers
+			.get(&peer)
+			.expect("peer exist since it was just modified; qed")
+			.is_banned()
+		{
+			log::warn!(
+				target: LOG_TARGET,
+				"{peer:?} banned, disconnecting, reason: {}",
+				reputation_change.reason,
+			);
+
+			for sender in &lock.protocols {
+				sender.unbounded_send(PeersetCommand::DisconnectPeer { peer });
+			}
+		}
+	}
 
 	/// Get next outbound peers for connection attempts, ignoring all peers in `ignore`.
 	///
@@ -160,7 +196,8 @@ impl PeerstoreHandle {
 				(!ignore.contains(&peer) && !info.is_banned()).then_some((*peer, info.reputation))
 			})
 			.collect::<Vec<(PeerId, _)>>();
-		candidates.sort_by(|(_, a), (_, b)| a.cmp(b));
+		candidates.shuffle(&mut thread_rng());
+		candidates.sort_by(|(_, a), (_, b)| b.cmp(a));
 		candidates
 			.into_iter()
 			.take(num_peers)
@@ -281,14 +318,28 @@ impl PeerStoreProvider for PeerstoreHandle {
 	}
 }
 
-// TODO: documentation
-// TODO: add handle for tests so they don't interfere with each other
+/// As notification protocols are initialized in the protocol implementations and
+/// `NotificationService` provided by the litep2p backend also combines `Peerset` into the
+/// implementation, the protocol must be able to acquire a handle to `Peerstore` when it's
+/// initializing itself.
+///
+/// To make that possible, crate a global static variable which be used to acquire a handle
+/// to `Peerstore` so protocols can initialize themselves without having `Litep2pNetworkBackend`
+/// be the master object which initializes and polles `NotificationService`s.
 static PEERSTORE_HANDLE: Lazy<PeerstoreHandle> =
 	Lazy::new(|| PeerstoreHandle(Arc::new(Mutex::new(Default::default()))));
 
 /// Get handle to `Peerstore`.
 pub fn peerstore_handle() -> PeerstoreHandle {
 	Lazy::force(&PEERSTORE_HANDLE).clone()
+}
+
+/// `Peerstore` handle for testing.
+///
+/// This instance of `Peerstore` is not shared between protocols.
+#[cfg(test)]
+pub fn peerstore_handle_test() -> PeerstoreHandle {
+	PeerstoreHandle(Arc::new(Mutex::new(Default::default())))
 }
 
 /// Peerstore implementation.
@@ -352,33 +403,4 @@ impl PeerStore for Peerstore {
 	async fn run(self) {
 		self.run().await;
 	}
-}
-
-#[cfg(test)]
-mod tests {
-	use super::peerstore_handle;
-	use sc_utils::mpsc::tracing_unbounded;
-
-	// #[test]
-	// fn acquire_mutual_handle() {
-	// 	// acquire first handle to peer store and register protocol
-	// 	let mut handle1 = peerstore_handle();
-	// 	let (tx1, _) = tracing_unbounded("mpsc-peerset-protocol", 100_000);
-	// 	handle1.register_protocol(tx1);
-
-	// 	// acquire second handle to peerstore and verify both handles have the registered
-	// 	// protocol
-	// 	let mut handle2 = peerstore_handle();
-	// 	println!("{:#?}", handle1.0.lock().protocols);
-	// 	println!("{:#?}", handle2.0.lock().protocols);
-	// 	assert_eq!(handle1.0.lock().protocols.len(), 1);
-	// 	assert_eq!(handle2.0.lock().protocols.len(), 1);
-
-	// 	// register another protocol using the second handle and verify both handles have the
-	// 	// protocol
-	// 	let (tx2, _) = tracing_unbounded("mpsc-peerset-protocol", 100_000);
-	// 	handle1.register_protocol(tx2);
-	// 	assert_eq!(handle1.0.lock().protocols.len(), 2);
-	// 	assert_eq!(handle2.0.lock().protocols.len(), 2);
-	// }
 }
