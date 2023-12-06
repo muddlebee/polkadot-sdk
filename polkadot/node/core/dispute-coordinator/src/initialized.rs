@@ -1134,7 +1134,7 @@ impl Initialized {
 		let potential_spam = is_potential_spam(&self.scraper, &new_state, &candidate_hash);
 		// We participate only in disputes which are not potential spam.
 		// We do not participate in disputes if all votes against come from disabled validators
-		// unless the disputes is confirmed.
+		// unless the dispute is confirmed.
 		let should_not_participate = !is_confirmed && against_votes_all_disabled;
 		let allow_participation = !potential_spam && !should_not_participate;
 
