@@ -1100,13 +1100,26 @@ impl Initialized {
 
 		let byzantine_threshold = polkadot_primitives::byzantine_threshold(n_validators);
 		// combine on-chain with off-chain disabled validators
-		let disabled_validators: HashSet<ValidatorIndex> = env
-			.disabled_indices()
-			.iter()
-			.cloned()
-			.chain(self.offchain_disabled_validators.iter(session))
-			.take(byzantine_threshold)
-			.collect();
+		let disabled_validators = {
+			let mut d: HashSet<ValidatorIndex> = HashSet::new();
+			for v in env
+				.disabled_indices()
+				.iter()
+				.cloned()
+				.chain(self.offchain_disabled_validators.iter(session))
+			{
+				// process disabled validators in the following order:
+				// - on-chain disabled validators
+				// - validators who voted for-invalid and lost
+				// - validators who voted against-valid and lost
+				// take at most `byzantine_threshold` validators
+				if d.len() == byzantine_threshold {
+					break
+				}
+				d.insert(v);
+			}
+			d
+		};
 		let against_votes_all_disabled = new_state
 			.votes()
 			.invalid
