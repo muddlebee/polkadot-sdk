@@ -41,7 +41,7 @@ use crate::{
 	request_from_runtime, request_key_ownership_proof, request_on_chain_votes,
 	request_session_executor_params, request_session_index_for_child, request_session_info,
 	request_submit_report_dispute_lost, request_unapplied_slashes, request_validation_code_by_hash,
-	request_validator_groups,
+	request_validator_groups, vstaging::get_disabled_validators_with_fallback,
 };
 
 /// Errors that can happen on runtime fetches.
@@ -174,6 +174,21 @@ impl RuntimeInfo {
 		let session_index = self.get_session_index_for_child(sender, relay_parent).await?;
 
 		self.get_session_info_by_index(sender, relay_parent, session_index).await
+	}
+
+	/// Get the list of disabled validators at the relay parent.
+	pub async fn get_disabled_validators<Sender>(
+		&mut self,
+		sender: &mut Sender,
+		relay_parent: Hash,
+	) -> Result<Vec<ValidatorIndex>>
+	where
+		Sender: SubsystemSender<RuntimeApiMessage>,
+	{
+		let disabled_validators = get_disabled_validators_with_fallback(sender, relay_parent)
+			.await
+			.map_err(|_| JfyiError::NoSuchSession(0))?; // TODO (@ordian): make this method return runtime error
+		Ok(disabled_validators)
 	}
 
 	/// Get `ExtendedSessionInfo` by session index.
